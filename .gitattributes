@@ -1,0 +1,15 @@
+# Git merge strategies for downstream forks
+#
+# Personal config files - forks keep their version during merges
+# Requires: git config --local merge.ours.driver true
+
+# Shell config (personal environment, paths, tools)
+fish/config/fish/config.fish merge=ours
+fish/config/fish/conf.d/** merge=ours
+
+# Mail config (personal accounts, providers)
+mail/config/aerc/accounts.conf.template merge=ours
+mail/install.sh merge=ours
+
+# Documentation (forks customize their own README)
+README.md merge=ours

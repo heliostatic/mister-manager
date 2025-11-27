@@ -4,6 +4,8 @@ Thumbs.db
 
 # Secrets - never commit these
 *.local
+# Already covered by *.local pattern, but explicit for clarity:
+script/secrets.defs.local
 secrets.fish
 !**/completions/secrets.fish
 .env

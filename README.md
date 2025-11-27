@@ -136,6 +136,10 @@ Options:
   --with-keys         Copy SSH keys from 1Password to ~/.ssh
   --full              Complete install: symlinks + installers + packages + keys + secrets
   -h, --help          Show this help
+
+Locking:
+  Only one bootstrap instance can run at a time. Concurrent runs will fail
+  with an error. Stale locks from crashed processes are auto-cleaned.
 ```
 
 ### Examples
@@ -242,8 +246,10 @@ Unified secrets management with multiple password manager backends and optional 
 
 1. **Install your preferred password manager CLI** (see table above)
 
-2. **Add your secrets to `script/secrets`:**
+2. **Create `script/secrets.defs.local` with your secrets:**
    ```bash
+   cp script/secrets.defs.example script/secrets.defs.local
+   # Edit to add your secrets:
    SECRET_DEFS="
    # 1Password
    email/password|op://Personal/Email App Password/password
@@ -463,7 +469,24 @@ DOTFILES_LOG=/tmp/dotfiles.log ./script/bootstrap
 
 ### Locking
 
-Bootstrap uses a lockfile to prevent concurrent runs. Stale locks are auto-cleaned.
+Bootstrap uses a lockfile to prevent concurrent runs:
+
+```bash
+# If you try to run bootstrap while another instance is running:
+./script/bootstrap
+# ✗ Bootstrap already running (PID: 12345, lockdir: /tmp/dotfiles-bootstrap.lock)
+```
+
+- **Location**: `$TMPDIR/dotfiles-bootstrap.lock` (or `/tmp/` on Linux)
+- **Stale locks**: Automatically cleaned if the owning process has died
+- **Release**: Lock is released automatically when bootstrap exits (including crashes)
+
+The locking mechanism:
+1. Creates a lock directory (atomic operation on all filesystems)
+2. Writes the current PID to a file inside the lock directory
+3. On subsequent runs, checks if the PID in the lock is still alive
+4. If the process is dead, cleans up the stale lock and proceeds
+5. Uses a trap to ensure the lock is released on exit, even on errors
 
 ---
 
@@ -477,6 +500,49 @@ These files are gitignored and loaded if present:
 | `~/.config/fish/secrets.fish` | Manual secret overrides |
 | `~/.config/aerc/accounts.conf` | Mail accounts (from template) |
 | `~/.ssh/config` | Machine-local SSH config (includes dotfiles hosts) |
+
+---
+
+## Forking This Template
+
+When you fork this repository for personal use:
+
+### Files That Stay Personal
+
+These files contain your personal config and won't merge from upstream:
+- `fish/config/fish/config.fish` - Your shell environment
+- `fish/config/fish/conf.d/*` - Your shell snippets
+- `mail/config/aerc/accounts.conf.template` - Your email accounts
+- `mail/install.sh` - Your mail provider settings
+- `README.md` - Your personal documentation
+
+### Files That Merge From Upstream
+
+These template files will receive upstream improvements:
+- `script/secrets` - Core secrets logic (your defs are in `secrets.defs.local`)
+- `script/sort-brewfile` - Brewfile sorting
+- `script/bootstrap` - Main installer
+- `script/lib.sh` - Shared functions
+- All `*.example` files
+
+### Setting Up Merge Strategy
+
+After forking, run:
+```bash
+git config --local merge.ours.driver true
+```
+
+This enables the `.gitattributes` merge strategies that keep personal files from being overwritten.
+
+### Updating From Upstream
+
+```bash
+git remote add upstream https://github.com/OWNER/mister-manager.git
+git fetch upstream
+git merge upstream/main
+# Personal files auto-resolve to yours via .gitattributes
+# Review any remaining conflicts in template files
+```
 
 ---
 

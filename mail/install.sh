@@ -36,7 +36,8 @@ setup_maildir() {
 }
 
 setup_mbsync_password() {
-    local keychain_service="mbsync-${MAIL_ACCOUNT_NAME,,}"  # lowercase
+    # Use tr for bash 3.2 compatibility (instead of ${var,,})
+    local keychain_service="mbsync-$(echo "$MAIL_ACCOUNT_NAME" | tr '[:upper:]' '[:lower:]')"
 
     # Check if password is already in keychain
     if security find-generic-password -s "$keychain_service" &>/dev/null; then
