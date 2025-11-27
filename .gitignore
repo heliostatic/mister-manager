@@ -19,7 +19,6 @@ secrets.fish
 !script/secrets-setup
 
 # Personal data
-mail/address_book.symlink
 
 # Editor
 *.swp
