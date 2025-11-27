@@ -11,7 +11,6 @@
 #   - Idempotent helpers: ensure_dir, ensure_symlink, would_change
 #   - Link tracking: track_link, untrack_link, find_repo_symlinks
 #   - Logging: init_logging, logs to ~/.dotfiles.log
-#   - History: record_history, saves to .history
 #   - Locking: acquire_lock, release_lock - prevent concurrent runs
 #
 # Environment variables:
@@ -43,21 +42,6 @@ init_logging() {
 _log() {
     if [[ "$LOGGING_ENABLED" == true ]]; then
         echo "[$(date -Iseconds)] $*" >> "$DOTFILES_LOG"
-    fi
-}
-
-# =============================================================================
-# History Tracking
-# =============================================================================
-HISTORY_FILE="${DOTFILES_ROOT:-.}/.history"
-
-# Record a command invocation - call from main script
-record_history() {
-    local cmd="$1"
-    shift
-    # Only record in non-dry-run mode
-    if [[ "$DRY_RUN" != true && -n "$DOTFILES_ROOT" ]]; then
-        echo "$(date -Iseconds) $cmd $*" >> "$HISTORY_FILE"
     fi
 }
 

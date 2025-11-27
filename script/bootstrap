@@ -612,9 +612,8 @@ main() {
     [[ "$DRY_RUN" == true ]] && info "DRY-RUN MODE - No changes will be made"
     [[ "$VERBOSE" == true ]] && info "VERBOSE MODE - Extra detail enabled"
 
-    # Initialize logging, history, and dry-run counter
+    # Initialize logging and dry-run counter
     init_logging "$@"
-    record_history "bootstrap" "$mode" "$@"
     init_dryrun
 
     # Acquire exclusive lock (prevents concurrent runs)

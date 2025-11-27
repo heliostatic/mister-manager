@@ -451,9 +451,7 @@ Tests include:
 
 ---
 
-## Logging & History
-
-### Logging
+## Logging
 
 All operations are logged to `~/.dotfiles.log`:
 

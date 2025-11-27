@@ -39,6 +39,5 @@ id_*
 *.pem
 *.key
 
-# History/logs (machine-specific)
-.history
+# Logs (machine-specific)
 *.log
