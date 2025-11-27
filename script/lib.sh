@@ -36,19 +36,17 @@ init_logging() {
         [[ -d "$log_dir" ]] || mkdir -p "$log_dir"
 
         LOGGING_ENABLED=true
-        {
-            echo ""
-            echo "========================================"
-            echo "[$(date -Iseconds)] Session start: $0 $*"
-            echo "========================================"
-        } >> "$DOTFILES_LOG"
+        _log INFO "=== Session start: $0 $* ==="
     fi
 }
 
 # Log a message to file (internal use)
+# Format: 2025-01-15T10:30:00Z LEVEL message
 _log() {
+    local level="$1"
+    shift
     if [[ "$LOGGING_ENABLED" == true ]]; then
-        echo "[$(date -Iseconds)] $*" >> "$DOTFILES_LOG"
+        printf "%s %-5s %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$level" "$*" >> "$DOTFILES_LOG"
     fi
 }
 
@@ -125,7 +123,7 @@ _dryrun_count() {
 # =============================================================================
 info() {
     printf "${BLUE}▸${NC} %s\n" "$1"
-    _log "INFO: $1"
+    _log INFO "$1"
 }
 
 # Section header for major phases
@@ -133,22 +131,22 @@ section() {
     echo ""
     printf "${BLUE}━━━${NC} %s ${BLUE}━━━${NC}\n" "$1"
     echo ""
-    _log "SECTION: $1"
+    _log INFO "--- $1 ---"
 }
 
 success() {
     printf "${GREEN}✓${NC} %s\n" "$1"
-    _log "SUCCESS: $1"
+    _log INFO "$1"
 }
 
 warn() {
     printf "${YELLOW}⚠${NC} %s\n" "$1"
-    _log "WARN: $1"
+    _log WARN "$1"
 }
 
 fail() {
     printf "${RED}✗${NC} %s\n" "$1"
-    _log "FAIL: $1"
+    _log ERROR "$1"
     exit 1
 }
 
@@ -156,7 +154,7 @@ fail() {
 verbose() {
     [[ "$VERBOSE" == true ]] || return 0
     printf "${GRAY}  │ %s${NC}\n" "$1"
-    _log "VERBOSE: $1"
+    _log DEBUG "$1"
 }
 
 # =============================================================================
