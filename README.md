@@ -453,10 +453,13 @@ Tests include:
 
 ## Logging
 
-All operations are logged to `~/.dotfiles.log`:
+All operations are logged to `~/.local/state/dotfiles/dotfiles.log` (follows [XDG Base Directory spec](https://specifications.freedesktop.org/basedir-spec/latest/)):
 
 ```bash
-tail -50 ~/.dotfiles.log
+tail -50 ~/.local/state/dotfiles/dotfiles.log
+
+# Or if you've set XDG_STATE_HOME:
+tail -50 "$XDG_STATE_HOME/dotfiles/dotfiles.log"
 
 # Disable logging
 DOTFILES_LOG=none ./script/bootstrap

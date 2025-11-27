@@ -10,24 +10,31 @@
 #   - System detection: get_os, get_distro, has_command
 #   - Idempotent helpers: ensure_dir, ensure_symlink, would_change
 #   - Link tracking: track_link, untrack_link, find_repo_symlinks
-#   - Logging: init_logging, logs to ~/.dotfiles.log
+#   - Logging: init_logging, logs to $XDG_STATE_HOME/dotfiles/
 #   - Locking: acquire_lock, release_lock - prevent concurrent runs
 #
 # Environment variables:
 #   DRY_RUN=true      Preview mode, no changes made
 #   VERBOSE=true      Show extra detail
-#   DOTFILES_LOG=none Disable logging (default: ~/.dotfiles.log)
+#   DOTFILES_LOG=none Disable logging (default: ~/.local/state/dotfiles/dotfiles.log)
 
 # =============================================================================
 # Logging
 # =============================================================================
 # Set DOTFILES_LOG to a file path to enable logging, or "none" to disable
-DOTFILES_LOG="${DOTFILES_LOG:-$HOME/.dotfiles.log}"
+# Default location follows XDG Base Directory spec (works on macOS and Linux)
+_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+DOTFILES_LOG="${DOTFILES_LOG:-$_STATE_HOME/dotfiles/dotfiles.log}"
 LOGGING_ENABLED=false
 
 # Initialize logging - call from main script
 init_logging() {
     if [[ -n "$DOTFILES_LOG" && "$DOTFILES_LOG" != "none" ]]; then
+        # Ensure log directory exists
+        local log_dir
+        log_dir="$(dirname "$DOTFILES_LOG")"
+        [[ -d "$log_dir" ]] || mkdir -p "$log_dir"
+
         LOGGING_ENABLED=true
         {
             echo ""
