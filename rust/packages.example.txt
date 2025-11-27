@@ -1,0 +1,51 @@
+# Rust/Cargo packages example
+#
+# Copy this file to rust/packages.txt and customize.
+# Packages are installed via: cargo install <package>
+#
+# Install all packages (filters comments and empty lines):
+#   grep -v '^#' rust/packages.txt | grep -v '^$' | while read pkg; do cargo install "$pkg"; done
+#
+# Or use cargo-binstall for faster binary installs:
+#   cargo install cargo-binstall
+#   grep -v '^#' rust/packages.txt | grep -v '^$' | while read pkg; do cargo binstall -y "$pkg"; done
+
+# =============================================================================
+# Essential CLI tools
+# =============================================================================
+# ripgrep          # Fast grep (rg) - often better via brew
+# fd-find          # Fast find (fd) - often better via brew
+# bat              # Cat with syntax highlighting - often better via brew
+# eza              # Modern ls replacement - often better via brew
+
+# =============================================================================
+# Development tools
+# =============================================================================
+# cargo-watch      # Auto-rebuild on file changes
+# cargo-edit       # Add/remove/upgrade dependencies
+# cargo-outdated   # Check for outdated dependencies
+# cargo-audit      # Security vulnerability checker
+# cargo-nextest    # Faster test runner
+
+# =============================================================================
+# Optional: Terminal utilities
+# =============================================================================
+# bottom           # System monitor (btm)
+# du-dust          # Disk usage analyzer (dust)
+# procs            # Modern ps replacement
+# bandwhich        # Network monitor
+# hyperfine        # Benchmarking tool
+# tokei            # Code statistics
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Many Rust CLI tools are also available via Homebrew (often easier on macOS).
+# Use cargo install for:
+#   - Tools not in Homebrew
+#   - Specific versions
+#   - Development/edge builds
+#
+# cargo-binstall downloads pre-built binaries when available,
+# which is much faster than compiling from source.

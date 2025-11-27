@@ -1,0 +1,80 @@
+# Homebrew Brewfile example
+#
+# Copy this file to macos/Brewfile and customize with your packages.
+# Install packages: brew bundle install --file=macos/Brewfile
+#
+# Documentation: https://github.com/Homebrew/homebrew-bundle
+
+# =============================================================================
+# Taps (third-party repositories)
+# =============================================================================
+tap "homebrew/bundle"
+# Note: homebrew/cask-fonts was deprecated in 2024 and merged into homebrew/cask
+# Fonts can be installed directly: brew install --cask font-<name>
+
+# =============================================================================
+# Essential CLI tools
+# =============================================================================
+brew "fish"           # Modern shell
+brew "git"            # Version control
+brew "tmux"           # Terminal multiplexer
+brew "neovim"         # Text editor (or helix, vim, etc.)
+brew "ripgrep"        # Fast grep replacement
+brew "fd"             # Fast find replacement
+brew "fzf"            # Fuzzy finder
+brew "zoxide"         # Smart cd replacement
+brew "bat"            # Cat with syntax highlighting
+brew "eza"            # Modern ls replacement
+brew "jq"             # JSON processor
+brew "gh"             # GitHub CLI
+
+# =============================================================================
+# Development tools (uncomment as needed)
+# =============================================================================
+# brew "go"
+# brew "node"
+# brew "python"
+# brew "rustup"
+
+# =============================================================================
+# Optional: Email tools (for mail/ topic)
+# =============================================================================
+# brew "isync"         # mbsync - IMAP sync
+# brew "notmuch"       # Email indexer
+# brew "aerc"          # Terminal email client
+# brew "msmtp"         # SMTP client
+
+# =============================================================================
+# Optional: 1Password CLI (for secrets management)
+# =============================================================================
+# cask "1password-cli"
+
+# =============================================================================
+# Fonts (optional)
+# =============================================================================
+# cask "font-jetbrains-mono-nerd-font"
+# cask "font-fira-code-nerd-font"
+
+# =============================================================================
+# macOS Applications (uncomment as needed)
+# =============================================================================
+# cask "alacritty"     # Terminal emulator
+# cask "wezterm"       # Terminal emulator
+# cask "rectangle"     # Window management
+# cask "raycast"       # Spotlight replacement
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Install all packages:
+#   brew bundle install --file=macos/Brewfile
+#
+# Check what's missing:
+#   brew bundle check --file=macos/Brewfile
+#
+# Clean up (remove unlisted packages):
+#   brew bundle cleanup --file=macos/Brewfile
+#
+# Export current packages to Brewfile:
+#   brew bundle dump --file=macos/Brewfile

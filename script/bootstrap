@@ -1,0 +1,655 @@
+#!/usr/bin/env bash
+#
+# bootstrap
+#
+# Main entry point for dotfiles installation.
+# Installs dependencies, symlinks dotfiles, and runs topic installers.
+#
+# Usage:
+#   ./script/bootstrap                    # Standard install (symlinks + installers)
+#   ./script/bootstrap --full             # Complete install for new machine
+#   ./script/bootstrap --dry-run          # Preview changes
+#   ./script/bootstrap --unlink           # Remove symlinks, restore backups
+#   ./script/bootstrap --track            # Scan and track existing symlinks
+#   ./script/bootstrap --doctor           # Comprehensive health check
+#   ./script/bootstrap --status           # Alias for --doctor
+#
+# Options:
+#   -n, --dry-run       Preview without making changes
+#   -v, --verbose       Show extra detail
+#   --with-packages     Install packages (Brewfile, distro, Rust)
+#   --with-keys         Copy SSH keys from 1Password
+#   --full              All of the above + cache secrets
+#
+# Logs to ~/.dotfiles.log (set DOTFILES_LOG=none to disable)
+#
+# Locking:
+#   Only one bootstrap instance can run at a time. If another instance is
+#   running, bootstrap will exit with an error. Stale locks from crashed
+#   processes are automatically cleaned up.
+
+set -e
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "$DOTFILES_ROOT"
+
+source "$DOTFILES_ROOT/script/lib.sh"
+
+# -----------------------------------------------------------------------------
+# Install Phases
+# -----------------------------------------------------------------------------
+
+install_dotfiles() {
+    section "Symlinks"
+    "$DOTFILES_ROOT/script/symlink"
+}
+
+cache_secrets() {
+    section "Secrets"
+
+    if ! has_command op; then
+        warn "1Password CLI (op) not installed - skipping secrets cache"
+        info "Install with: brew install 1password-cli"
+        return 0
+    fi
+
+    # Run secrets cache-all (it has its own info messages)
+    # Pass --no-summary to avoid duplicate dry-run summaries
+    if [[ "$DRY_RUN" == true ]]; then
+        "$DOTFILES_ROOT/script/secrets" cache-all --dry-run --no-summary
+    else
+        "$DOTFILES_ROOT/script/secrets" cache-all
+    fi
+}
+
+run_installers() {
+    section "Installers"
+
+    # Find and run all install.sh scripts in topic folders
+    # Run platform-specific installers only on matching OS
+    local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+
+    for installer in $(find "$DOTFILES_ROOT" -maxdepth 2 -name "install.sh" | sort); do
+        local topic_dir="$(dirname "$installer")"
+        local topic_name="$(basename "$topic_dir")"
+
+        # Skip platform-specific topics on wrong OS
+        if [[ "$topic_name" == "macos" && "$os" != "darwin" ]]; then
+            verbose "Skipping macos installer (not on macOS)"
+            continue
+        fi
+        if [[ "$topic_name" == "linux" && "$os" != "linux" ]]; then
+            verbose "Skipping linux installer (not on Linux)"
+            continue
+        fi
+
+        echo ""
+        info "${topic_name}"
+        "$installer"
+    done
+}
+
+# -----------------------------------------------------------------------------
+# Unlink - Remove symlinks and restore backups
+# -----------------------------------------------------------------------------
+
+unlink_dotfiles() {
+    section "Unlink"
+
+    local count=0
+    local restored=0
+
+    # First, try to use tracked links
+    if [[ -f "$LINKS_FILE" ]]; then
+        info "Removing tracked symlinks..."
+        while IFS= read -r line; do
+            [[ "$line" =~ ^#.*$ ]] && continue
+            [[ -z "$line" ]] && continue
+
+            # Parse "source -> target"
+            local src="${line% -> *}"
+            local dst="${line#* -> }"
+
+            if [[ -L "$dst" ]]; then
+                local current_target
+                current_target="$(readlink "$dst")"
+
+                # Only remove if it points to our repo
+                if [[ "$current_target" == "$DOTFILES_ROOT"* ]]; then
+                    info "Removing: $dst"
+                    run rm "$dst"
+                    ((count++)) || true
+
+                    # Look for most recent backup
+                    local backup
+                    backup=$(ls -t "${dst}.backup."* 2>/dev/null | head -1 || true)
+                    if [[ -n "$backup" && -e "$backup" ]]; then
+                        info "Restoring: $backup"
+                        run mv "$backup" "$dst"
+                        ((restored++)) || true
+                    fi
+
+                    # Untrack it
+                    untrack_link "$src" "$dst"
+                else
+                    verbose "Skipping $dst (points elsewhere: $current_target)"
+                fi
+            else
+                verbose "Skipping $dst (not a symlink)"
+                # Clean up stale tracking entry
+                untrack_link "$src" "$dst"
+            fi
+        done < "$LINKS_FILE"
+    else
+        info "No .links file found, scanning for symlinks..."
+    fi
+
+    # Also scan for any untracked symlinks pointing to repo
+    info "Scanning for untracked symlinks..."
+    while IFS= read -r dst; do
+        [[ -z "$dst" ]] && continue
+
+        # Check if already handled via tracking
+        local src
+        src="$(readlink "$dst")"
+        if grep -qF "$src -> $dst" "$LINKS_FILE" 2>/dev/null; then
+            continue
+        fi
+
+        info "Removing untracked: $dst"
+        run rm "$dst"
+        ((count++)) || true
+
+        # Look for backup
+        local backup
+        backup=$(ls -t "${dst}.backup."* 2>/dev/null | head -1 || true)
+        if [[ -n "$backup" && -e "$backup" ]]; then
+            info "Restoring: $backup"
+            run mv "$backup" "$dst"
+            ((restored++)) || true
+        fi
+    done < <(find_repo_symlinks)
+
+    echo ""
+    if [[ "$DRY_RUN" == true ]]; then
+        info "Would remove $count symlink(s), restore $restored backup(s)"
+    else
+        success "Removed $count symlink(s), restored $restored backup(s)"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Track - Record existing symlinks
+# -----------------------------------------------------------------------------
+
+track_symlinks() {
+    local target_path="$1"
+    local count=0
+
+    section "Track"
+
+    if [[ -n "$target_path" ]]; then
+        # Track a specific path
+        if [[ ! -L "$target_path" ]]; then
+            fail "Not a symlink: $target_path"
+        fi
+
+        local src
+        src="$(readlink "$target_path")"
+
+        # Verify it points to our repo
+        if [[ "$src" != "$DOTFILES_ROOT"* ]]; then
+            fail "Symlink doesn't point to dotfiles repo: $src"
+        fi
+
+        info "Tracking: $target_path"
+        track_link "$src" "$target_path"
+        count=1
+    else
+        # Scan and track all symlinks pointing to repo
+        info "Scanning for symlinks pointing to $DOTFILES_ROOT..."
+
+        while IFS= read -r dst; do
+            [[ -z "$dst" ]] && continue
+
+            local src
+            src="$(readlink "$dst")"
+
+            info "Found: $dst -> $src"
+            track_link "$src" "$dst"
+            ((count++)) || true
+        done < <(find_repo_symlinks)
+    fi
+
+    echo ""
+    if [[ "$DRY_RUN" == true ]]; then
+        info "Would track $count symlink(s)"
+    else
+        success "Tracked $count symlink(s)"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Doctor - Comprehensive system health check
+# -----------------------------------------------------------------------------
+
+run_doctor() {
+    local issues=0
+
+    # --- Symlinks ---
+    section "Symlinks"
+
+    local orphans=0
+    local stale=0
+    local links_ok=0
+
+    # Check tracked links
+    if [[ -f "$LINKS_FILE" ]]; then
+        info "Checking tracked links..."
+        while IFS= read -r line; do
+            [[ "$line" =~ ^#.*$ ]] && continue
+            [[ -z "$line" ]] && continue
+
+            local src="${line% -> *}"
+            local dst="${line#* -> }"
+
+            if [[ -L "$dst" ]]; then
+                local current_target
+                current_target="$(readlink "$dst")"
+                if [[ "$current_target" == "$src" ]]; then
+                    verbose "OK: $dst"
+                    ((links_ok++)) || true
+                else
+                    warn "CHANGED: $dst points to $current_target (expected $src)"
+                    ((stale++)) || true
+                fi
+            elif [[ -e "$dst" ]]; then
+                warn "REPLACED: $dst is no longer a symlink"
+                ((stale++)) || true
+            else
+                warn "MISSING: $dst does not exist"
+                ((stale++)) || true
+            fi
+        done < "$LINKS_FILE"
+    else
+        info "No .links file found (run bootstrap first)"
+    fi
+
+    # Check for untracked symlinks
+    info "Scanning for untracked symlinks..."
+    while IFS= read -r dst; do
+        [[ -z "$dst" ]] && continue
+
+        local src
+        src="$(readlink "$dst")"
+        local entry="$src -> $dst"
+
+        if ! grep -qF "$entry" "$LINKS_FILE" 2>/dev/null; then
+            warn "ORPHAN: $dst (not tracked)"
+            ((orphans++)) || true
+        fi
+    done < <(find_repo_symlinks)
+
+    printf "  ${GREEN}✓${NC} %d link(s) OK\n" "$links_ok"
+    [[ $stale -gt 0 ]] && printf "  ${YELLOW}⚠${NC} %d stale (run bootstrap to fix)\n" "$stale"
+    [[ $orphans -gt 0 ]] && printf "  ${YELLOW}⚠${NC} %d orphaned (run --track to add)\n" "$orphans"
+    ((issues += stale + orphans)) || true
+
+    # --- Dependencies ---
+    section "Dependencies"
+
+    local deps_ok=0
+    local deps_missing=0
+
+    check_dep() {
+        local cmd="$1"
+        local name="${2:-$1}"
+        if has_command "$cmd"; then
+            verbose "OK: $name"
+            ((deps_ok++)) || true
+        else
+            warn "MISSING: $name"
+            ((deps_missing++)) || true
+        fi
+    }
+
+    info "Checking required tools..."
+    check_dep git
+    check_dep fish
+    check_dep tmux
+
+    info "Checking optional tools..."
+    check_dep op "1Password CLI (op)"
+    check_dep brew "Homebrew"
+
+    printf "  ${GREEN}✓${NC} %d tool(s) installed\n" "$deps_ok"
+    [[ $deps_missing -gt 0 ]] && printf "  ${YELLOW}⚠${NC} %d tool(s) missing\n" "$deps_missing"
+    ((issues += deps_missing)) || true
+
+    # --- SSH ---
+    section "SSH"
+
+    local ssh_ok=0
+    local ssh_issues=0
+
+    # Check SSH directory
+    if [[ -d "$HOME/.ssh" ]]; then
+        local ssh_perms
+        ssh_perms=$(stat -f "%Lp" "$HOME/.ssh" 2>/dev/null || stat -c "%a" "$HOME/.ssh" 2>/dev/null)
+        if [[ "$ssh_perms" == "700" ]]; then
+            verbose "OK: ~/.ssh permissions (700)"
+            ((ssh_ok++)) || true
+        else
+            warn "~/.ssh has wrong permissions: $ssh_perms (should be 700)"
+            ((ssh_issues++)) || true
+        fi
+    else
+        warn "~/.ssh directory does not exist"
+        ((ssh_issues++)) || true
+    fi
+
+    # Check SSH config Include
+    if [[ -f "$HOME/.ssh/config" ]]; then
+        if grep -qF "Include $DOTFILES_ROOT/ssh/" "$HOME/.ssh/config" 2>/dev/null; then
+            verbose "OK: SSH config includes dotfiles"
+            ((ssh_ok++)) || true
+        else
+            warn "SSH config missing Include directive"
+            ((ssh_issues++)) || true
+        fi
+    else
+        info "No ~/.ssh/config (run bootstrap to create)"
+    fi
+
+    # Check for SSH keys
+    local key_count=0
+    for key in "$HOME/.ssh/id_"*; do
+        [[ -f "$key" && ! "$key" == *.pub ]] && ((key_count++)) || true
+    done
+    if [[ $key_count -gt 0 ]]; then
+        verbose "OK: $key_count SSH key(s) found"
+        ((ssh_ok++)) || true
+    else
+        warn "No SSH keys found in ~/.ssh"
+        ((ssh_issues++)) || true
+    fi
+
+    printf "  ${GREEN}✓${NC} %d check(s) passed\n" "$ssh_ok"
+    [[ $ssh_issues -gt 0 ]] && printf "  ${YELLOW}⚠${NC} %d issue(s)\n" "$ssh_issues"
+    ((issues += ssh_issues)) || true
+
+    # --- Secrets ---
+    section "Secrets"
+
+    local secrets_ok=0
+    local secrets_missing=0
+
+    if has_command op; then
+        info "Checking 1Password status..."
+        if op account get &>/dev/null; then
+            verbose "OK: Signed in to 1Password"
+            ((secrets_ok++)) || true
+        else
+            info "Not signed in to 1Password (run: op signin)"
+        fi
+    fi
+
+    info "Checking Keychain cache..."
+    local cached_secrets=("fastmail/password" "github/token" "homebrew/token")
+    for secret in "${cached_secrets[@]}"; do
+        local service="dotfiles-${secret//\//-}"
+        if security find-generic-password -s "$service" &>/dev/null; then
+            verbose "OK: $secret (cached)"
+            ((secrets_ok++)) || true
+        else
+            verbose "MISSING: $secret (not cached)"
+            ((secrets_missing++)) || true
+        fi
+    done
+
+    printf "  ${GREEN}✓${NC} %d secret(s) cached\n" "$secrets_ok"
+    [[ $secrets_missing -gt 0 ]] && printf "  ${YELLOW}⚠${NC} %d secret(s) not cached (run: ./script/secrets cache-all)\n" "$secrets_missing"
+
+    # --- Shell ---
+    section "Shell"
+
+    local shell_ok=0
+    local shell_issues=0
+
+    # Check default shell
+    local current_shell
+    current_shell=$(dscl . -read /Users/"$USER" UserShell 2>/dev/null | awk '{print $2}')
+    if [[ "$current_shell" == *"fish"* ]]; then
+        verbose "OK: Default shell is fish"
+        ((shell_ok++)) || true
+    else
+        info "Default shell is $current_shell (not fish)"
+    fi
+
+    # Check fish config
+    if [[ -L "$HOME/.config/fish" ]]; then
+        verbose "OK: Fish config linked"
+        ((shell_ok++)) || true
+    elif [[ -d "$HOME/.config/fish" ]]; then
+        warn "~/.config/fish exists but is not a symlink"
+        ((shell_issues++)) || true
+    fi
+
+    # Check fisher
+    if [[ -f "$HOME/.config/fish/functions/fisher.fish" ]] || fish -c "type -q fisher" 2>/dev/null; then
+        verbose "OK: Fisher plugin manager installed"
+        ((shell_ok++)) || true
+    else
+        warn "Fisher not installed (run fish installer)"
+        ((shell_issues++)) || true
+    fi
+
+    printf "  ${GREEN}✓${NC} %d check(s) passed\n" "$shell_ok"
+    [[ $shell_issues -gt 0 ]] && printf "  ${YELLOW}⚠${NC} %d issue(s)\n" "$shell_issues"
+    ((issues += shell_issues)) || true
+
+    # --- Homebrew (macOS only) ---
+    if [[ "$(uname)" == "Darwin" ]] && has_command brew; then
+        section "Homebrew"
+
+        local brewfile="$DOTFILES_ROOT/macos/Brewfile"
+        if [[ -f "$brewfile" ]]; then
+            if brew bundle check --file="$brewfile" &>/dev/null; then
+                success "All Brewfile dependencies satisfied"
+            else
+                local missing
+                missing=$(brew bundle check --file="$brewfile" --verbose 2>/dev/null | grep -c "^→" || echo "0")
+                warn "$missing package(s) missing from Brewfile"
+                info "Run: brew bundle install --file=$brewfile"
+                ((issues++)) || true
+            fi
+        fi
+    fi
+
+    # --- Summary ---
+    section "Summary"
+
+    if [[ $issues -eq 0 ]]; then
+        success "All checks passed! System is healthy."
+    else
+        warn "$issues issue(s) found"
+        echo ""
+        info "Run ./script/bootstrap to fix most issues"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+
+show_help() {
+    cat << EOF
+Usage: bootstrap [command] [options]
+
+Commands:
+  (default)          Install dotfiles (symlinks + installers)
+  --unlink           Remove symlinks and restore backups
+  --track [path]     Track symlinks (scan all if no path given)
+  --doctor, --status Comprehensive system health check
+
+Options:
+  -n, --dry-run       Show what would be done without making changes
+  -v, --verbose       Show verbose output (state checks, skipped operations)
+  --no-install        Skip running install.sh scripts
+  --symlinks-only     Only create symlinks, skip installers
+  --with-packages     Install packages (Brewfile, distro packages, Rust crates)
+  --with-keys         Copy SSH keys from 1Password to ~/.ssh
+  --full              Complete install: symlinks + installers + packages + keys + secrets
+  -h, --help          Show this help
+
+Locking:
+  Only one bootstrap instance can run at a time. Concurrent runs will fail
+  with an error. Stale locks from crashed processes are auto-cleaned.
+
+Examples:
+  ./script/bootstrap                  # Standard install (symlinks + installers)
+  ./script/bootstrap --full           # Complete install for new machine
+  ./script/bootstrap --full -n        # Preview complete install
+  ./script/bootstrap --with-packages  # Include all packages
+  ./script/bootstrap --with-keys      # Include SSH keys from 1Password
+  ./script/bootstrap --symlinks-only  # Only symlinks, no installers
+  ./script/bootstrap --unlink         # Remove all symlinks
+  ./script/bootstrap --doctor         # Check system health
+  ./script/bootstrap --doctor -v      # Verbose health check
+EOF
+}
+
+main() {
+    # Parse arguments BEFORE any operations
+    local mode="install"
+    local skip_installers=false
+    local only_symlinks=false
+    local track_path=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--dry-run)
+                DRY_RUN=true
+                export DRY_RUN
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                export VERBOSE
+                shift
+                ;;
+            --no-install)
+                skip_installers=true
+                shift
+                ;;
+            --symlinks-only)
+                only_symlinks=true
+                shift
+                ;;
+            --with-keys)
+                WITH_SSH_KEYS=true
+                export WITH_SSH_KEYS
+                shift
+                ;;
+            --with-packages)
+                WITH_PACKAGES=true
+                export WITH_PACKAGES
+                shift
+                ;;
+            --full)
+                WITH_SSH_KEYS=true
+                WITH_PACKAGES=true
+                export WITH_SSH_KEYS WITH_PACKAGES
+                FULL_INSTALL=true
+                shift
+                ;;
+            --unlink)
+                mode="unlink"
+                shift
+                ;;
+            --track)
+                mode="track"
+                shift
+                # Check for optional path argument
+                if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+                    track_path="$1"
+                    shift
+                fi
+                ;;
+            --status|--doctor)
+                mode="doctor"
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                fail "Unknown option: $1"
+                ;;
+        esac
+    done
+
+    # Show header
+    local title="Dotfiles Bootstrap"
+    case "$mode" in
+        unlink) title="Dotfiles Unlink" ;;
+        track)  title="Dotfiles Track" ;;
+        doctor) title="Dotfiles Doctor" ;;
+    esac
+
+    echo ""
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "  $title (DRY-RUN)"
+        printf '  %s\n' "$(printf '=%.0s' $(seq 1 $((${#title} + 11))))"
+    else
+        echo "  $title"
+        printf '  %s\n' "$(printf '=%.0s' $(seq 1 ${#title}))"
+    fi
+    echo ""
+
+    [[ "$DRY_RUN" == true ]] && info "DRY-RUN MODE - No changes will be made"
+    [[ "$VERBOSE" == true ]] && info "VERBOSE MODE - Extra detail enabled"
+
+    # Initialize logging, history, and dry-run counter
+    init_logging "$@"
+    record_history "bootstrap" "$mode" "$@"
+    init_dryrun
+
+    # Acquire exclusive lock (prevents concurrent runs)
+    acquire_lock
+
+    # Run the selected mode
+    case "$mode" in
+        install)
+            install_dotfiles
+            if [[ "$only_symlinks" == false && "$skip_installers" == false ]]; then
+                run_installers
+            fi
+            # Full install: cache secrets to keychain
+            if [[ "$FULL_INSTALL" == true ]]; then
+                cache_secrets
+            fi
+            ;;
+        unlink)
+            unlink_dotfiles
+            ;;
+        track)
+            track_symlinks "$track_path"
+            ;;
+        doctor)
+            run_doctor
+            ;;
+    esac
+
+    # Show summary
+    if [[ "$DRY_RUN" == true ]]; then
+        show_dryrun_summary
+    elif [[ "$mode" == "install" ]]; then
+        echo ""
+        success "All done!"
+    fi
+}
+
+main "$@"

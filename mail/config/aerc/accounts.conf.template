@@ -1,0 +1,81 @@
+# aerc accounts.conf template
+#
+# Copy this file to ~/.config/aerc/accounts.conf and customize.
+# This file should NOT be committed to git (contains account-specific config).
+#
+# Password retrieval options (pick one per account):
+#   1. Via dotfiles secrets script (recommended):
+#      source-cred-cmd = ~/.dotfiles/script/secrets get email/password
+#
+#   2. Via 1Password CLI directly:
+#      source-cred-cmd = op read 'op://Personal/Email App Password/password'
+#
+#   3. Via macOS Keychain:
+#      source-cred-cmd = security find-generic-password -s 'email-service' -w
+#
+#   4. Via pass (password-store):
+#      source-cred-cmd = pass email/provider
+#
+# Documentation:
+#   - aerc-accounts(5): https://man.archlinux.org/man/aerc-accounts.5
+#   - Password managers: https://man.sr.ht/~rjarry/aerc/integrations/password-manager.md
+
+# =============================================================================
+# Example: Fastmail (IMAP)
+# =============================================================================
+# [Fastmail]
+# source          = imaps://user%40fastmail.fm@imap.fastmail.com
+# source-cred-cmd = ~/.dotfiles/script/secrets get email/password
+# outgoing        = smtps://user%40fastmail.fm@smtp.fastmail.com
+# outgoing-cred-cmd = ~/.dotfiles/script/secrets get email/password
+# default         = INBOX
+# from            = Your Name <user@fastmail.fm>
+# copy-to         = Sent
+# archive         = Archive
+# postpone        = Drafts
+# check-mail      = 1m
+# check-mail-cmd  = mbsync fastmail && notmuch new
+
+# =============================================================================
+# Example: Gmail (IMAP)
+# =============================================================================
+# [Gmail]
+# source          = imaps://user%40gmail.com@imap.gmail.com
+# source-cred-cmd = ~/.dotfiles/script/secrets get gmail/password
+# outgoing        = smtps://user%40gmail.com@smtp.gmail.com
+# outgoing-cred-cmd = ~/.dotfiles/script/secrets get gmail/password
+# default         = INBOX
+# from            = Your Name <user@gmail.com>
+# copy-to         = [Gmail]/Sent Mail
+# archive         = [Gmail]/All Mail
+# postpone        = [Gmail]/Drafts
+
+# =============================================================================
+# Example: Notmuch/Maildir (local mail with full-text search)
+# =============================================================================
+# [Local-Mail]
+# source          = notmuch://~/.maildir/Provider
+# query-map       = ~/.config/aerc/notmuch-query-map
+# outgoing        = smtps://user%40provider.com@smtp.provider.com
+# outgoing-cred-cmd = ~/.dotfiles/script/secrets get email/password
+# default         = INBOX
+# from            = Your Name <user@provider.com>
+# copy-to         = Sent
+# archive         = Archive
+# postpone        = Drafts
+# check-mail-cmd  = mbsync provider && notmuch new
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# URL encoding for special characters in usernames:
+#   @ = %40
+#   + = %2B
+#   / = %2F
+#
+# To test password retrieval:
+#   ~/.dotfiles/script/secrets get email/password
+#
+# To cache passwords for offline use:
+#   ~/.dotfiles/script/secrets cache-all

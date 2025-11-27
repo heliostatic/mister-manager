@@ -1,0 +1,83 @@
+# mbsync configuration example
+#
+# Copy this file to ~/.mbsyncrc and customize with your email settings.
+# See mbsync(1) and mbsyncrc(5) for full documentation.
+#
+# Password retrieval options:
+#   PassCmd "~/.dotfiles/script/secrets get email/password"
+#   PassCmd "security find-generic-password -s 'mbsync-email' -w"
+#   PassCmd "pass email/provider"
+#   PassCmd "op read 'op://Personal/Email App Password/password'"
+
+# =============================================================================
+# Example: Fastmail
+# =============================================================================
+IMAPAccount fastmail
+Host imap.fastmail.com
+Port 993
+User user@fastmail.fm
+PassCmd "~/.dotfiles/script/secrets get email/password"
+SSLType IMAPS
+SSLVersions TLSv1.2
+CertificateFile /etc/ssl/certs/ca-certificates.crt
+# On macOS (Apple Silicon): /opt/homebrew/etc/ca-certificates/cert.pem
+# On macOS (Intel): /usr/local/etc/ca-certificates/cert.pem
+# Or omit CertificateFile on macOS to use system certificates
+
+IMAPStore fastmail-remote
+Account fastmail
+
+MaildirStore fastmail-local
+Path ~/.maildir/Fastmail/
+Inbox ~/.maildir/Fastmail/Inbox
+SubFolders Verbatim
+
+Channel fastmail
+Far :fastmail-remote:
+Near :fastmail-local:
+Patterns *
+Create Both
+Expunge Both
+SyncState *
+
+# =============================================================================
+# Example: Gmail
+# =============================================================================
+# IMAPAccount gmail
+# Host imap.gmail.com
+# Port 993
+# User user@gmail.com
+# PassCmd "~/.dotfiles/script/secrets get gmail/password"
+# SSLType IMAPS
+# AuthMechs LOGIN
+#
+# IMAPStore gmail-remote
+# Account gmail
+#
+# MaildirStore gmail-local
+# Path ~/.maildir/Gmail/
+# Inbox ~/.maildir/Gmail/Inbox
+# SubFolders Verbatim
+#
+# Channel gmail
+# Far :gmail-remote:
+# Near :gmail-local:
+# Patterns * ![Gmail]* "[Gmail]/Sent Mail" "[Gmail]/All Mail"
+# Create Both
+# Expunge Both
+# SyncState *
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Initial sync (download all mail):
+#   mbsync -a
+#
+# Sync specific channel:
+#   mbsync fastmail
+#
+# Common troubleshooting:
+#   - Certificate errors: Update CertificateFile path for your OS
+#   - Auth errors: Ensure app password is set (not account password)
+#   - Gmail: Enable "Less secure apps" or use App Passwords

@@ -1,0 +1,27 @@
+# Example SSH host definitions
+# Rename this to personal.ssh, work.ssh, etc.
+#
+# These files are included via ~/.ssh/config's Include directive.
+# You can have multiple *.ssh files for different contexts.
+
+# Example: shortcut for a frequently-used server
+# Host myserver
+#     HostName server.example.com
+#     User myuser
+#     IdentityFile ~/.ssh/id_ed25519
+
+# Example: jump host / bastion
+# Host bastion
+#     HostName bastion.example.com
+#     User admin
+#     IdentityFile ~/.ssh/bastion_key
+#
+# Host internal-*
+#     ProxyJump bastion
+#     User deploy
+
+# Example: GitHub with specific key
+# Host github.com
+#     HostName github.com
+#     User git
+#     IdentityFile ~/.ssh/github_key

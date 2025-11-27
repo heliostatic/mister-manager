@@ -1,0 +1,49 @@
+# notmuch configuration example
+#
+# Copy this file to ~/.notmuch-config and customize.
+# See notmuch-config(5) for full documentation.
+#
+# After configuring, initialize the database:
+#   notmuch new
+
+[database]
+# Path to your maildir (should match mbsync's MaildirStore Path)
+# Note: notmuch doesn't expand ~, use path relative to $HOME (without ~)
+path=.maildir/YourProvider
+
+[user]
+# Your name and email addresses
+name=Your Name
+primary_email=user@example.com
+# Additional email addresses you receive mail at:
+# other_email=alias@example.com;work@company.com
+
+[new]
+# Tags to add to new messages
+tags=unread;inbox
+# Folders to ignore when scanning for new mail (mbsync metadata)
+ignore=.mbsyncstate;.uidvalidity
+
+[search]
+# Default exclusion tags for search results
+exclude_tags=deleted;spam
+
+[maildir]
+# How to handle maildir flag synchronization
+synchronize_flags=true
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Common commands:
+#   notmuch new              # Scan for new mail
+#   notmuch search tag:inbox # Search inbox
+#   notmuch tag -inbox +archive -- tag:inbox  # Archive all inbox
+#
+# Integration with aerc:
+#   Use notmuch:// source in accounts.conf for local search
+#   Configure query-map for virtual folders
+#
+# Integration with mbsync:
+#   Run 'mbsync -a && notmuch new' to sync and index

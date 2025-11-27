@@ -1,0 +1,55 @@
+# theme = "nord"
+theme = "monokai_pro_octagon"
+# theme = "dracula"
+
+[editor]
+line-number = "relative"
+rulers = [80]
+cursorline = true
+idle-timeout = 200
+bufferline = "multiple"
+color-modes = true
+
+[editor.lsp]
+display-messages = true
+display-inlay-hints = true
+snippets = true
+
+[editor.soft-wrap]
+enable = true
+wrap-indicator = "↬"
+
+[editor.statusline]
+left = ["mode", "spinner","file-name"]
+center = ["file-name"]
+right = ["diagnostics", "selections", "position", "position-percentage", "spacer", "version-control", "file-encoding", "file-type"]
+separator = "│"
+mode.normal = "NOR"
+mode.insert = "INS"
+mode.select = "SEL"
+
+[editor.whitespace.render]
+space = "none"
+tab = "all"
+newline = "all"
+
+[editor.whitespace.characters]
+tab = "▸"
+newline = "⏎"
+
+[editor.cursor-shape]
+normal = "block"
+insert = "bar"
+select = "underline"
+
+[editor.indent-guides]
+render = true
+
+[keys.select]
+"space" = { "space" = "command_palette"}
+
+[keys.normal]
+"C-y" = "yank_main_selection_to_clipboard"
+"space" = { "space" = "command_palette"}
+tab = "select_next_sibling"
+S-tab = "select_prev_sibling"

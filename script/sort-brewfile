@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#
+# sort-brewfile
+#
+# Sorts macos/Brewfile and manages pending packages:
+#   - Commented-out entries (# brew "x") move to Brewfile.pending with datestamp
+#   - Uncommented entries in pending move back to Brewfile
+#   - Brewfile is sorted: cask_args first, then taps, brews, casks (each alphabetized)
+#   - Duplicates are removed
+#
+# Run automatically via pre-commit hook, or manually:
+#   ./script/sort-brewfile
+#   ./script/sort-brewfile --dry-run
+
+set -e
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BREWFILE="$DOTFILES_ROOT/macos/Brewfile"
+PENDING="$DOTFILES_ROOT/macos/Brewfile.pending"
+
+DRY_RUN="${DRY_RUN:-false}"
+[[ "$1" == "-n" || "$1" == "--dry-run" ]] && DRY_RUN=true
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+GRAY='\033[0;90m'
+NC='\033[0m'
+
+info() { printf "${GREEN}▸${NC} %s\n" "$1"; }
+warn() { printf "${YELLOW}▸${NC} %s\n" "$1"; }
+dry() { printf "${GRAY}  [dry-run]${NC} %s\n" "$1"; }
+
+# Ensure files exist (exit gracefully if Brewfile not present)
+if [[ ! -f "$BREWFILE" ]]; then
+    if [[ "$DRY_RUN" == true ]]; then
+        dry "No Brewfile found at $BREWFILE (nothing to sort)"
+    else
+        info "No Brewfile found at $BREWFILE (nothing to sort)"
+    fi
+    exit 0
+fi
+[[ -f "$PENDING" ]] || touch "$PENDING"
+
+# Create temp workspace
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# =============================================================================
+# Step 1: Extract commented-out entries from Brewfile → pending
+# =============================================================================
+# Pattern: lines starting with # followed by brew/cask/tap/mas
+COMMENTED_PATTERN='^#[[:space:]]*(brew|cask|tap|mas)[[:space:]]'
+
+if grep -qE "$COMMENTED_PATTERN" "$BREWFILE"; then
+    DATE=$(date +%Y-%m-%d)
+
+    # Extract commented entries
+    grep -E "$COMMENTED_PATTERN" "$BREWFILE" > "$TMP/to_pending"
+
+    if [[ -s "$TMP/to_pending" ]]; then
+        COUNT=$(wc -l < "$TMP/to_pending" | tr -d ' ')
+        if [[ "$DRY_RUN" == true ]]; then
+            dry "Would move $COUNT commented entry/entries to Brewfile.pending"
+            cat "$TMP/to_pending" | while read -r line; do
+                dry "  $line"
+            done
+        else
+            info "Moving $COUNT commented entry/entries to Brewfile.pending"
+            echo "" >> "$PENDING"
+            echo "# Moved from Brewfile on $DATE" >> "$PENDING"
+            cat "$TMP/to_pending" >> "$PENDING"
+        fi
+    fi
+fi
+
+# =============================================================================
+# Step 2: Extract uncommented entries from pending → Brewfile
+# =============================================================================
+# Pattern: lines starting with brew/cask/tap/mas (not commented)
+ACTIVE_PATTERN='^(brew|cask|tap|mas)[[:space:]]'
+
+if grep -qE "$ACTIVE_PATTERN" "$PENDING"; then
+    grep -E "$ACTIVE_PATTERN" "$PENDING" > "$TMP/to_brewfile"
+
+    if [[ -s "$TMP/to_brewfile" ]]; then
+        COUNT=$(wc -l < "$TMP/to_brewfile" | tr -d ' ')
+        if [[ "$DRY_RUN" == true ]]; then
+            dry "Would restore $COUNT entry/entries from Brewfile.pending"
+            cat "$TMP/to_brewfile" | while read -r line; do
+                dry "  $line"
+            done
+        else
+            info "Restoring $COUNT entry/entries from Brewfile.pending"
+        fi
+    fi
+else
+    touch "$TMP/to_brewfile"
+fi
+
+# =============================================================================
+# Step 3: Build sorted Brewfile
+# =============================================================================
+
+# Start with current Brewfile minus commented-out package entries and section comments
+# Keep: cask_args, active entries, inline comments on active entries
+# Remove: commented-out entries, standalone section comment lines
+grep -vE "$COMMENTED_PATTERN" "$BREWFILE" | grep -vE '^#' | grep -v '^$' > "$TMP/active" || true
+
+# Add restored entries from pending
+cat "$TMP/to_brewfile" >> "$TMP/active" 2>/dev/null || true
+
+# Extract each section
+grep -E '^cask_args' "$TMP/active" | sort -u > "$TMP/cask_args" || true
+grep -E '^tap ' "$TMP/active" | sort -u > "$TMP/taps" || true
+grep -E '^brew ' "$TMP/active" | sort -u > "$TMP/brews" || true
+grep -E '^cask ' "$TMP/active" | sort -u > "$TMP/casks" || true
+grep -E '^mas ' "$TMP/active" | sort -u > "$TMP/mas" || true
+
+# Reassemble
+{
+    # cask_args first (if present)
+    if [[ -s "$TMP/cask_args" ]]; then
+        cat "$TMP/cask_args"
+        echo ""
+    fi
+
+    # taps
+    if [[ -s "$TMP/taps" ]]; then
+        cat "$TMP/taps"
+        echo ""
+    fi
+
+    # brews
+    if [[ -s "$TMP/brews" ]]; then
+        cat "$TMP/brews"
+        echo ""
+    fi
+
+    # casks
+    if [[ -s "$TMP/casks" ]]; then
+        cat "$TMP/casks"
+        echo ""
+    fi
+
+    # mas
+    if [[ -s "$TMP/mas" ]]; then
+        cat "$TMP/mas"
+        echo ""
+    fi
+} > "$TMP/sorted_brewfile"
+
+# Remove trailing blank lines
+sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$TMP/sorted_brewfile" > "$TMP/final_brewfile"
+# Add single trailing newline
+echo "" >> "$TMP/final_brewfile"
+
+# =============================================================================
+# Step 4: Update pending file (remove restored entries)
+# =============================================================================
+grep -vE "$ACTIVE_PATTERN" "$PENDING" > "$TMP/final_pending" || true
+
+# Clean up empty "Moved from" headers with no entries following
+awk '
+    /^# Moved from Brewfile/ { header = $0; next }
+    /^#[[:space:]]*(brew|cask|tap|mas)/ { if (header) print header; header = ""; print; next }
+    /^$/ { if (header) header = ""; print; next }
+    { header = ""; print }
+' "$TMP/final_pending" > "$TMP/cleaned_pending"
+
+# Remove multiple blank lines and leading/trailing blanks
+cat -s "$TMP/cleaned_pending" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba' -e '}' > "$TMP/final_pending2" || true
+
+# =============================================================================
+# Step 5: Apply changes
+# =============================================================================
+
+CHANGES=0
+
+if [[ "$DRY_RUN" == true ]]; then
+    if ! diff -q "$BREWFILE" "$TMP/final_brewfile" >/dev/null 2>&1; then
+        dry "Would update Brewfile (sorted)"
+        CHANGES=1
+    fi
+    if ! diff -q "$PENDING" "$TMP/final_pending2" >/dev/null 2>&1; then
+        dry "Would update Brewfile.pending"
+        CHANGES=1
+    fi
+    if [[ $CHANGES -eq 0 ]]; then
+        info "Brewfile already sorted, no changes needed"
+    fi
+else
+    # Only write if changed
+    if ! diff -q "$BREWFILE" "$TMP/final_brewfile" >/dev/null 2>&1; then
+        mv "$TMP/final_brewfile" "$BREWFILE"
+        info "Updated Brewfile (sorted)"
+        CHANGES=1
+    fi
+
+    if ! diff -q "$PENDING" "$TMP/final_pending2" >/dev/null 2>&1; then
+        mv "$TMP/final_pending2" "$PENDING"
+        info "Updated Brewfile.pending"
+        CHANGES=1
+    fi
+
+    if [[ $CHANGES -eq 0 ]]; then
+        info "Brewfile already sorted, no changes needed"
+    else
+        # Stage both files if in a git repo
+        if git rev-parse --git-dir >/dev/null 2>&1; then
+            git add "$BREWFILE" "$PENDING" 2>/dev/null || true
+        fi
+    fi
+fi

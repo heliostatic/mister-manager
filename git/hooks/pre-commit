@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#
+# git/hooks/pre-commit
+#
+# Pre-commit hook that runs automatically before each commit.
+# Symlinked to .git/hooks/pre-commit by git/install.sh
+#
+# Current hooks:
+#   - Sort Brewfile and manage pending packages (if Brewfile staged)
+
+set -e
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# =============================================================================
+# Brewfile sorting
+# =============================================================================
+# Only run if Brewfile is staged for commit
+if git diff --cached --name-only | grep -qE '^macos/Brewfile$'; then
+    echo "Pre-commit: Sorting Brewfile..."
+    "$DOTFILES_ROOT/script/sort-brewfile"
+
+    # Re-stage the files (sort-brewfile already does this, but be explicit)
+    git add "$DOTFILES_ROOT/macos/Brewfile"
+    [[ -f "$DOTFILES_ROOT/macos/Brewfile.pending" ]] && git add "$DOTFILES_ROOT/macos/Brewfile.pending"
+fi

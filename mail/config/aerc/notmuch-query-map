@@ -1,0 +1,6 @@
+Today	= date:today NOT path:/Junk/
+Inbox	= folder:Inbox
+Flagged	= tag:flagged
+News	= path:/SaneNews/
+Later	= path:/SaneLater/
+aerc	= to:aerc

@@ -1,0 +1,39 @@
+# ~/.zshrc - loaded by interactive zsh shells
+
+# Source profile if not already done
+[[ -f ~/.profile ]] && source ~/.profile
+
+# Add local bin to path
+export PATH="$HOME/.bin:$HOME/.local/bin:$PATH"
+
+# History
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+
+# Completion
+autoload -Uz compinit && compinit
+
+# Editor
+export EDITOR=hx
+export VISUAL=hx
+
+# Aliases
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls -CF'
+
+# If eza is installed, use it
+if command -v eza &> /dev/null; then
+    alias ls='eza'
+    alias ll='eza -la'
+    alias la='eza -a'
+    alias lt='eza --tree'
+fi
+
+# If bat is installed, use it
+if command -v bat &> /dev/null; then
+    alias cat='bat'
+fi

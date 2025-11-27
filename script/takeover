@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+# takeover
+#
+# Adopts an existing config file into the dotfiles repo.
+# Moves the file to the appropriate topic folder and creates a symlink.
+#
+# Usage:
+#   takeover ~/.gitconfig git
+#   takeover ~/.config/fish fish --config
+#   takeover --dry-run ~/.tmux.conf tmux
+#
+# Supports --dry-run mode to preview what would happen.
+
+set -e
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$DOTFILES_ROOT/script/lib.sh"
+
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+
+show_usage() {
+    cat << EOF
+Usage: takeover [options] <file> <topic>
+
+Adopts an existing config file into the dotfiles repo.
+
+Arguments:
+  file      Path to the file or directory to take over
+  topic     Topic folder to place it in (e.g., git, fish, tmux)
+
+Options:
+  --config      Place in topic/config/ (for ~/.config/* items)
+  -n, --dry-run Show what would happen without making changes
+  -h, --help    Show this help
+
+Examples:
+  takeover ~/.gitconfig git
+  takeover ~/.tmux.conf tmux
+  takeover ~/.config/fish fish --config
+  takeover -n ~/.config/helix editor --config   # Preview only
+EOF
+}
+
+takeover_file() {
+    local source_path="$1"
+    local topic="$2"
+    local use_config="$3"
+
+    # Expand path
+    source_path="$(cd "$(dirname "$source_path")" && pwd)/$(basename "$source_path")"
+
+    if [[ ! -e "$source_path" ]]; then
+        fail "File does not exist: $source_path"
+    fi
+
+    if [[ -L "$source_path" ]]; then
+        fail "File is already a symlink: $source_path"
+    fi
+
+    local topic_dir="$DOTFILES_ROOT/$topic"
+    ensure_dir "$topic_dir"
+
+    local filename="$(basename "$source_path")"
+    local dest_path
+
+    if [[ "$use_config" == true ]]; then
+        # Goes in topic/config/name
+        ensure_dir "$topic_dir/config"
+        dest_path="$topic_dir/config/$filename"
+    else
+        # Goes in topic/name.symlink (strip leading dot if present)
+        local base_name="${filename#.}"
+        dest_path="$topic_dir/$base_name.symlink"
+    fi
+
+    if [[ -e "$dest_path" ]]; then
+        fail "Destination already exists: $dest_path"
+    fi
+
+    warn_non_idempotent "File takeover (moves original file)"
+
+    info "Moving $source_path -> $dest_path"
+    run mv "$source_path" "$dest_path"
+
+    info "Creating symlink $source_path -> $dest_path"
+    run ln -s "$dest_path" "$source_path"
+
+    if [[ "$DRY_RUN" != true ]]; then
+        success "Takeover complete!"
+        echo ""
+        echo "  Source: $source_path (now symlink)"
+        echo "  Dest:   $dest_path"
+        echo ""
+        echo "Don't forget to commit:"
+        echo "  cd $DOTFILES_ROOT && git add $topic && git commit -m 'Add $filename'"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+
+main() {
+    local source_path=""
+    local topic=""
+    local use_config=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--dry-run)
+                DRY_RUN=true
+                export DRY_RUN
+                shift
+                ;;
+            --config)
+                use_config=true
+                shift
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            -*)
+                fail "Unknown option: $1"
+                ;;
+            *)
+                if [[ -z "$source_path" ]]; then
+                    source_path="$1"
+                elif [[ -z "$topic" ]]; then
+                    topic="$1"
+                else
+                    fail "Too many arguments"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$source_path" || -z "$topic" ]]; then
+        show_usage
+        exit 1
+    fi
+
+    [[ "$DRY_RUN" == true ]] && info "DRY-RUN MODE - No changes will be made"
+
+    takeover_file "$source_path" "$topic" "$use_config"
+
+    show_dryrun_summary
+}
+
+main "$@"

@@ -1,0 +1,56 @@
+# Linux packages
+#
+# Format:
+#   package_name                     - Same name on all distros
+#   debian:name,fedora:name,arch:name - Distro-specific names
+#
+# Lines starting with # are comments
+# Empty lines are ignored
+
+# =============================================================================
+# Core utilities
+# =============================================================================
+fish
+tmux
+git
+curl
+wget
+htop
+tree
+jq
+
+# =============================================================================
+# Modern CLI tools
+# =============================================================================
+# ripgrep - fast grep replacement
+ripgrep
+
+# fd - fast find replacement
+debian:fd-find,fedora:fd-find,arch:fd
+
+# fzf - fuzzy finder
+fzf
+
+# bat - cat with syntax highlighting
+bat
+
+# =============================================================================
+# Editors
+# =============================================================================
+neovim
+
+# =============================================================================
+# Development
+# =============================================================================
+# Build essentials
+debian:build-essential,fedora:@development-tools,arch:base-devel
+
+# Shell linting
+shellcheck
+
+# =============================================================================
+# Optional - uncomment as needed
+# =============================================================================
+# delta                    # Git diff viewer (may need manual install)
+# eza                      # Modern ls replacement (may need manual install)
+# zoxide                   # Smart cd (may need manual install)

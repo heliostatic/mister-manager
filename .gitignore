@@ -1,0 +1,42 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets - never commit these
+*.local
+secrets.fish
+!**/completions/secrets.fish
+.env
+.envrc
+**/accounts.conf
+**/*.secret
+**/*.credentials
+*password*
+*token*
+!script/secrets
+!script/secrets-setup
+
+# Personal data
+mail/address_book.symlink
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Backups created by bootstrap
+.dotfiles-backup/
+
+# Link tracking (machine-specific)
+.links
+
+# SSH keys that might accidentally end up here
+id_*
+*.pem
+*.key
+
+# History/logs (machine-specific)
+.history
+*.log

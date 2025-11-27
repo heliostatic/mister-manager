@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+#
+# symlink
+#
+# Finds all *.symlink files and symlinks them to $HOME.
+# Finds all config/* directories and symlinks them to ~/.config/
+#
+# File naming conventions:
+#   foo.symlink         -> ~/.foo
+#   config/bar          -> ~/.config/bar
+#
+# Supports --dry-run mode via DRY_RUN environment variable.
+
+set -e
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$DOTFILES_ROOT/script/lib.sh"
+
+# Only create backup dir if we actually need to back something up
+BACKUP_DIR=""
+
+get_backup_dir() {
+    if [[ -z "$BACKUP_DIR" ]]; then
+        BACKUP_DIR="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
+    fi
+    echo "$BACKUP_DIR"
+}
+
+# -----------------------------------------------------------------------------
+# Symlink Functions (using idempotent helpers from lib.sh)
+# -----------------------------------------------------------------------------
+
+# Process *.symlink files
+# foo.symlink in topic/ becomes ~/.foo
+link_symlink_files() {
+    info "Processing *.symlink files..."
+
+    local count=0
+    local changed=0
+
+    while IFS= read -r -d '' src; do
+        local filename="$(basename "$src" .symlink)"
+        local dst="$HOME/.$filename"
+
+        # Check if change is needed (for reporting)
+        if would_change symlink "$src" "$dst"; then
+            ((changed++)) || true
+        fi
+
+        ensure_symlink "$src" "$dst"
+        ((count++)) || true
+    done < <(find "$DOTFILES_ROOT" -maxdepth 3 -name "*.symlink" -print0)
+
+    if [[ $count -eq 0 ]]; then
+        info "No *.symlink files found"
+    else
+        verbose "Processed $count symlink files ($changed would change)"
+    fi
+}
+
+# Process config/ directories in topics
+# topic/config/foo becomes ~/.config/foo
+link_config_dirs() {
+    info "Processing config directories..."
+
+    ensure_dir "$HOME/.config"
+
+    local count=0
+    local changed=0
+
+    for topic_dir in "$DOTFILES_ROOT"/*/; do
+        local topic_config="$topic_dir/config"
+
+        if [[ -d "$topic_config" ]]; then
+            for item in "$topic_config"/*; do
+                if [[ -e "$item" ]]; then
+                    local name="$(basename "$item")"
+                    local dst="$HOME/.config/$name"
+
+                    # Check if change is needed (for reporting)
+                    if would_change symlink "$item" "$dst"; then
+                        ((changed++)) || true
+                    fi
+
+                    ensure_symlink "$item" "$dst"
+                    ((count++)) || true
+                fi
+            done
+        fi
+    done
+
+    if [[ $count -eq 0 ]]; then
+        info "No config directories found"
+    else
+        verbose "Processed $count config items ($changed would change)"
+    fi
+}
+
+# Link the bin/ directory
+link_bin() {
+    local bin_dir="$DOTFILES_ROOT/bin"
+
+    if [[ -d "$bin_dir" ]]; then
+        info "Linking bin directory..."
+        local dst="$HOME/.bin"
+
+        ensure_symlink "$bin_dir" "$dst"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+
+main() {
+    link_symlink_files
+    link_config_dirs
+    link_bin
+
+    # Only show backup message if we actually created backups
+    if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+        echo ""
+        warn "Backups saved to: $BACKUP_DIR"
+    fi
+}
+
+main "$@"

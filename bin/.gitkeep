@@ -1,0 +1,9 @@
+# This directory is symlinked to ~/.bin
+# Add your custom scripts here and they'll be available in your PATH
+#
+# Example scripts you might add:
+#   - git-cleanup: Script to clean up merged branches
+#   - backup: System backup script
+#   - project-setup: Initialize new project boilerplate
+#
+# Scripts should be executable: chmod +x script-name

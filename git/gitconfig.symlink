@@ -1,0 +1,55 @@
+[user]
+    name = Your Name
+    email = your@email.com
+
+[core]
+    editor = hx
+    pager = diff-so-fancy | less --tabs=4 -RFX
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = true
+
+[push]
+    default = current
+    autoSetupRemote = true
+
+[alias]
+    st = status
+    co = checkout
+    br = branch
+    ci = commit
+    lg = log --oneline --graph --decorate
+    unstage = reset HEAD --
+    last = log -1 HEAD
+    amend = commit --amend --no-edit
+
+[diff]
+    colorMoved = default
+
+[merge]
+    conflictstyle = diff3
+
+[color]
+    ui = true
+
+[color "diff-highlight"]
+    oldNormal = red bold
+    oldHighlight = red bold 52
+    newNormal = green bold
+    newHighlight = green bold 22
+
+[color "diff"]
+    meta = 11
+    frag = magenta bold
+    func = 146 bold
+    commit = yellow bold
+    old = red bold
+    new = green bold
+    whitespace = red reverse
+
+# Include local config (machine-specific, not in git)
+[include]
+    path = ~/.gitconfig.local
