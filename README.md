@@ -453,9 +453,20 @@ Tests include:
 
 ## Logging
 
-All operations are logged to `~/.local/state/dotfiles/dotfiles.log` (follows [XDG Base Directory spec](https://specifications.freedesktop.org/basedir-spec/latest/)):
+All operations are logged to `~/.local/state/dotfiles/dotfiles.log` (follows [XDG Base Directory spec](https://specifications.freedesktop.org/basedir-spec/latest/)).
+
+Log format:
+```
+2025-01-15T10:30:00Z INFO  === Session start: ./script/bootstrap --full ===
+2025-01-15T10:30:00Z INFO  --- Symlinks ---
+2025-01-15T10:30:01Z INFO  Creating symlink: ~/.gitconfig
+2025-01-15T10:30:02Z WARN  File already exists, backing up
+2025-01-15T10:30:03Z ERROR Failed to create symlink
+2025-01-15T10:30:04Z DEBUG Verbose details (with -v flag)
+```
 
 ```bash
+# View recent logs
 tail -50 ~/.local/state/dotfiles/dotfiles.log
 
 # Or if you've set XDG_STATE_HOME:
