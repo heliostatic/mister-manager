@@ -17,5 +17,5 @@ complete -c secrets -l skip-validate -d 'Skip item validation before caching'
 complete -c secrets -s h -l help -d 'Show help'
 
 # Secret name completion for 'get' subcommand
-# Dynamically list secrets from the secrets script (uses PATH if available, else ~/.dotfiles)
-complete -c secrets -n '__fish_seen_subcommand_from get' -a '(if command -v secrets >/dev/null 2>&1; secrets list 2>/dev/null; else ~/.dotfiles/script/secrets list 2>/dev/null; end | grep "^  " | string trim | cut -d" " -f1)' -d 'Secret name'
+# Dynamically list secrets from the secrets script (requires secrets in PATH via ~/.bin)
+complete -c secrets -n '__fish_seen_subcommand_from get' -a '(secrets list 2>/dev/null | grep "^  " | string trim | cut -d" " -f1)' -d 'Secret name'

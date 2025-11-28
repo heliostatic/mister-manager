@@ -296,7 +296,7 @@ Unified secrets management with multiple password manager backends and optional 
 ./script/secrets backends
 
 # In config files (PassCmd, source-cred-cmd, etc.):
-PassCmd "$HOME/.dotfiles/script/secrets get email/password"
+PassCmd "secrets get email/password"
 ```
 
 ### Backend-Specific Notes

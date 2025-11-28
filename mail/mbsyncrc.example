@@ -4,7 +4,7 @@
 # See mbsync(1) and mbsyncrc(5) for full documentation.
 #
 # Password retrieval options:
-#   PassCmd "~/.dotfiles/script/secrets get email/password"
+#   PassCmd "secrets get email/password"
 #   PassCmd "security find-generic-password -s 'mbsync-email' -w"
 #   PassCmd "pass email/provider"
 #   PassCmd "op read 'op://Personal/Email App Password/password'"
@@ -16,7 +16,7 @@ IMAPAccount fastmail
 Host imap.fastmail.com
 Port 993
 User user@fastmail.fm
-PassCmd "~/.dotfiles/script/secrets get email/password"
+PassCmd "secrets get email/password"
 SSLType IMAPS
 SSLVersions TLSv1.2
 CertificateFile /etc/ssl/certs/ca-certificates.crt
@@ -47,7 +47,7 @@ SyncState *
 # Host imap.gmail.com
 # Port 993
 # User user@gmail.com
-# PassCmd "~/.dotfiles/script/secrets get gmail/password"
+# PassCmd "secrets get gmail/password"
 # SSLType IMAPS
 # AuthMechs LOGIN
 #
