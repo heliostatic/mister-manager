@@ -18,11 +18,13 @@ DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$DOTFILES_ROOT/script/lib.sh"
 
 # Only create backup dir if we actually need to back something up
+# Location follows XDG Base Directory spec (same as logs)
+_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 BACKUP_DIR=""
 
 get_backup_dir() {
     if [[ -z "$BACKUP_DIR" ]]; then
-        BACKUP_DIR="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
+        BACKUP_DIR="$_STATE_HOME/dotfiles/backup/$(date +%Y%m%d-%H%M%S)"
     fi
     echo "$BACKUP_DIR"
 }

@@ -27,7 +27,7 @@ secrets.fish
 .idea/
 .vscode/
 
-# Backups created by bootstrap
+# Legacy backup location (now uses ~/.local/state/dotfiles/backup/)
 .dotfiles-backup/
 
 # Link tracking (machine-specific)

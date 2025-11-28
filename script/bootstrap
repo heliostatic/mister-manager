@@ -21,7 +21,7 @@
 #   --with-keys         Copy SSH keys from 1Password
 #   --full              All of the above + cache secrets
 #
-# Logs to ~/.dotfiles.log (set DOTFILES_LOG=none to disable)
+# Logs to ~/.local/state/dotfiles/dotfiles.log (set DOTFILES_LOG=none to disable)
 #
 # Locking:
 #   Only one bootstrap instance can run at a time. If another instance is
