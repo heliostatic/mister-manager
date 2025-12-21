@@ -1,0 +1,415 @@
+#!/usr/bin/env bash
+#
+# brew-audit
+#
+# Find installed Homebrew packages not tracked in Brewfile.
+# Interactively add them to Brewfile or mark as intentionally skipped.
+#
+# Skipped packages go to Brewfile.pending (commented out) so they won't
+# be prompted again on future runs.
+#
+# Usage:
+#   ./script/brew-audit              # Interactive audit (uses fzf if available)
+#   ./script/brew-audit --dry-run    # Preview without changes
+#   ./script/brew-audit --all        # Include dependencies, not just leaves
+#   ./script/brew-audit --type brew  # Only audit formulae
+#   ./script/brew-audit --no-fzf     # Force simple prompts instead of fzf
+
+set -e
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BREWFILE="$DOTFILES_ROOT/macos/Brewfile"
+PENDING="$DOTFILES_ROOT/macos/Brewfile.pending"
+
+# Source shared library
+# shellcheck source=lib.sh
+source "$DOTFILES_ROOT/script/lib.sh"
+
+# =============================================================================
+# Options
+# =============================================================================
+DRY_RUN="${DRY_RUN:-false}"
+LEAVES_ONLY=true
+RUN_SORT=true
+AUDIT_TYPE=""  # empty = all types
+USE_FZF=true   # use fzf if available
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Find installed Homebrew packages not in Brewfile and interactively
+add them or mark as skipped.
+
+Options:
+  -n, --dry-run      Preview mode - show what would happen
+  --no-sort          Don't run sort-brewfile afterward
+  --leaves-only      Only top-level formulae, not dependencies (default)
+  --all              Include auto-installed dependencies
+  --type TYPE        Only audit one type: tap, brew, or cask
+  --no-fzf           Disable fzf interface, use simple prompts
+  -h, --help         Show this help
+
+With fzf (default if installed):
+  Tab      Toggle selection
+  Enter    Confirm - selected items go to Brewfile, rest to pending
+  Esc      Cancel - no changes made
+
+Without fzf (fallback):
+  y  Yes, add to Brewfile
+  n  No, skip (add to Brewfile.pending)
+  a  Add all remaining
+  q  Quit (keeps changes made so far)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --no-sort)
+            RUN_SORT=false
+            shift
+            ;;
+        --leaves-only)
+            LEAVES_ONLY=true
+            shift
+            ;;
+        --all)
+            LEAVES_ONLY=false
+            shift
+            ;;
+        --type)
+            AUDIT_TYPE="$2"
+            if [[ ! "$AUDIT_TYPE" =~ ^(tap|brew|cask)$ ]]; then
+                fail "Invalid type: $AUDIT_TYPE (must be tap, brew, or cask)"
+            fi
+            shift 2
+            ;;
+        --no-fzf)
+            USE_FZF=false
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            fail "Unknown option: $1"
+            ;;
+    esac
+done
+
+# =============================================================================
+# Ensure Homebrew is available
+# =============================================================================
+if ! has_command brew; then
+    fail "Homebrew not found. Please install it first."
+fi
+
+if [[ ! -f "$BREWFILE" ]]; then
+    fail "Brewfile not found at $BREWFILE"
+fi
+
+# Ensure pending file exists
+[[ -f "$PENDING" ]] || touch "$PENDING"
+
+# Create temp workspace
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# =============================================================================
+# Parse Brewfile and Brewfile.pending
+# =============================================================================
+# Extract package names from Brewfile entries like:
+#   brew 'foo'
+#   brew "foo"
+#   brew 'user/tap/foo'
+#   cask 'bar'
+#   tap 'user/repo'
+#   # brew 'skipped'  (in pending file)
+
+extract_packages() {
+    local file="$1"
+    local type="$2"
+    local include_commented="${3:-false}"
+
+    if [[ ! -f "$file" ]]; then
+        return
+    fi
+
+    if [[ "$include_commented" == true ]]; then
+        # Include both active and commented entries
+        grep -E "^#?[[:space:]]*${type}[[:space:]]" "$file" 2>/dev/null || true
+    else
+        # Only active entries
+        grep -E "^${type}[[:space:]]" "$file" 2>/dev/null || true
+    fi | sed -E "s/^#?[[:space:]]*${type}[[:space:]]+['\"]?([^'\"#]+)['\"]?.*/\1/" | sort -u
+}
+
+info "Parsing Brewfile and Brewfile.pending..."
+
+# Get tracked packages from Brewfile (store in temp files for set operations)
+extract_packages "$BREWFILE" "tap" > "$TMP/tracked_taps"
+extract_packages "$BREWFILE" "brew" > "$TMP/tracked_brews"
+extract_packages "$BREWFILE" "cask" > "$TMP/tracked_casks"
+
+# Get skipped packages from Brewfile.pending (include commented entries)
+extract_packages "$PENDING" "tap" true > "$TMP/skipped_taps"
+extract_packages "$PENDING" "brew" true > "$TMP/skipped_brews"
+extract_packages "$PENDING" "cask" true > "$TMP/skipped_casks"
+
+# Combine tracked and skipped for "known" packages
+cat "$TMP/tracked_taps" "$TMP/skipped_taps" 2>/dev/null | sort -u > "$TMP/known_taps"
+cat "$TMP/tracked_brews" "$TMP/skipped_brews" 2>/dev/null | sort -u > "$TMP/known_brews"
+cat "$TMP/tracked_casks" "$TMP/skipped_casks" 2>/dev/null | sort -u > "$TMP/known_casks"
+
+verbose "Tracked taps: $(wc -l < "$TMP/tracked_taps" | tr -d ' ')"
+verbose "Tracked brews: $(wc -l < "$TMP/tracked_brews" | tr -d ' ')"
+verbose "Tracked casks: $(wc -l < "$TMP/tracked_casks" | tr -d ' ')"
+
+# =============================================================================
+# Get installed packages
+# =============================================================================
+info "Querying installed packages..."
+
+touch "$TMP/installed_taps" "$TMP/installed_brews" "$TMP/installed_casks"
+
+# Taps
+if [[ -z "$AUDIT_TYPE" || "$AUDIT_TYPE" == "tap" ]]; then
+    brew tap 2>/dev/null | sort > "$TMP/installed_taps"
+    verbose "Installed taps: $(wc -l < "$TMP/installed_taps" | tr -d ' ')"
+fi
+
+# Formulae (brews)
+if [[ -z "$AUDIT_TYPE" || "$AUDIT_TYPE" == "brew" ]]; then
+    if [[ "$LEAVES_ONLY" == true ]]; then
+        brew leaves 2>/dev/null | sort > "$TMP/installed_brews"
+        verbose "Installed formulae (leaves only): $(wc -l < "$TMP/installed_brews" | tr -d ' ')"
+    else
+        brew list --formula 2>/dev/null | sort > "$TMP/installed_brews"
+        verbose "Installed formulae (all): $(wc -l < "$TMP/installed_brews" | tr -d ' ')"
+    fi
+fi
+
+# Casks
+if [[ -z "$AUDIT_TYPE" || "$AUDIT_TYPE" == "cask" ]]; then
+    brew list --cask 2>/dev/null | sort > "$TMP/installed_casks"
+    verbose "Installed casks: $(wc -l < "$TMP/installed_casks" | tr -d ' ')"
+fi
+
+# =============================================================================
+# Compute untracked packages (installed - known)
+# =============================================================================
+
+# For brews, we need to handle tap-prefixed names (e.g., pls-rs/pls/pls)
+# Extract short names from known_brews for comparison
+sed 's|.*/||' "$TMP/known_brews" | sort -u > "$TMP/known_brews_short"
+cat "$TMP/known_brews" "$TMP/known_brews_short" | sort -u > "$TMP/known_brews_all"
+
+comm -23 "$TMP/installed_taps" "$TMP/known_taps" > "$TMP/untracked_taps"
+comm -23 "$TMP/installed_brews" "$TMP/known_brews_all" > "$TMP/untracked_brews"
+comm -23 "$TMP/installed_casks" "$TMP/known_casks" > "$TMP/untracked_casks"
+
+UNTRACKED_TAP_COUNT=$(wc -l < "$TMP/untracked_taps" | tr -d ' ')
+UNTRACKED_BREW_COUNT=$(wc -l < "$TMP/untracked_brews" | tr -d ' ')
+UNTRACKED_CASK_COUNT=$(wc -l < "$TMP/untracked_casks" | tr -d ' ')
+TOTAL_UNTRACKED=$((UNTRACKED_TAP_COUNT + UNTRACKED_BREW_COUNT + UNTRACKED_CASK_COUNT))
+
+if [[ $TOTAL_UNTRACKED -eq 0 ]]; then
+    success "All installed packages are accounted for!"
+    exit 0
+fi
+
+info "Found $TOTAL_UNTRACKED untracked package(s)"
+
+# =============================================================================
+# Build unified list with type prefixes
+# =============================================================================
+# Format: "type 'name'" for display and parsing
+{
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && echo "tap '$name'"
+    done < "$TMP/untracked_taps"
+
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && echo "brew '$name'"
+    done < "$TMP/untracked_brews"
+
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && echo "cask '$name'"
+    done < "$TMP/untracked_casks"
+} > "$TMP/untracked_all"
+
+# =============================================================================
+# Helper functions
+# =============================================================================
+ADDED_COUNT=0
+SKIPPED_COUNT=0
+
+add_to_brewfile() {
+    local entry="$1"  # e.g., "brew 'foo'"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "${GRAY}  [dry-run]${NC} Would add: %s\n" "$entry"
+    else
+        echo "$entry" >> "$BREWFILE"
+    fi
+    ADDED_COUNT=$((ADDED_COUNT + 1))
+}
+
+add_to_pending() {
+    local entry="$1"  # e.g., "brew 'foo'"
+    local date
+    date=$(date +%Y-%m-%d)
+
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "${GRAY}  [dry-run]${NC} Would skip: # %s\n" "$entry"
+    else
+        echo "# Skipped by brew-audit on $date" >> "$PENDING"
+        echo "# ${entry}" >> "$PENDING"
+    fi
+    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+}
+
+# =============================================================================
+# FZF-based selection (preferred)
+# =============================================================================
+run_fzf_selection() {
+    echo ""
+    info "Select packages to ADD to Brewfile (Tab=toggle, Enter=confirm, Esc=cancel)"
+    echo ""
+
+    # Run fzf with multi-select
+    # Selected items will be added to Brewfile
+    # Non-selected items will be added to pending
+    local selected
+    if selected=$(fzf --multi \
+        --header="Tab=toggle, Enter=confirm selected, Esc=cancel (no changes)" \
+        --prompt="Add to Brewfile> " \
+        --preview-window=hidden \
+        --bind="esc:abort" \
+        < "$TMP/untracked_all" 2>/dev/null); then
+
+        # User confirmed - process selections
+        echo "$selected" > "$TMP/selected"
+
+        # Add selected items to Brewfile
+        while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            add_to_brewfile "$entry"
+            success "Added: $entry"
+        done < "$TMP/selected"
+
+        # Add non-selected items to pending
+        while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            if ! grep -qFx "$entry" "$TMP/selected" 2>/dev/null; then
+                add_to_pending "$entry"
+                warn "Skipped: $entry"
+            fi
+        done < "$TMP/untracked_all"
+
+        return 0
+    else
+        # User cancelled (Esc or Ctrl-C)
+        info "Cancelled - no changes made"
+        return 1
+    fi
+}
+
+# =============================================================================
+# Simple prompt fallback (when fzf unavailable)
+# =============================================================================
+run_simple_prompts() {
+    local ADD_ALL=false
+    local QUIT=false
+
+    echo ""
+
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+
+        if [[ "$QUIT" == true ]]; then
+            break
+        fi
+
+        if [[ "$ADD_ALL" == true ]]; then
+            add_to_brewfile "$entry"
+            success "Added: $entry"
+            continue
+        fi
+
+        printf "${YELLOW}?${NC} %s is installed but not tracked\n" "$entry"
+        printf "  [y]es add / [n]o skip / [a]dd all / [q]uit: "
+
+        local response
+        read -r response < /dev/tty || response="q"
+
+        case "$response" in
+            y|Y|yes)
+                add_to_brewfile "$entry"
+                success "Added: $entry"
+                ;;
+            n|N|no|"")
+                add_to_pending "$entry"
+                warn "Skipped: $entry"
+                ;;
+            a|A)
+                ADD_ALL=true
+                add_to_brewfile "$entry"
+                success "Added: $entry"
+                ;;
+            q|Q|quit)
+                QUIT=true
+                info "Quitting (changes so far have been saved)"
+                ;;
+            *)
+                warn "Invalid input, skipping..."
+                add_to_pending "$entry"
+                warn "Skipped: $entry"
+                ;;
+        esac
+    done < "$TMP/untracked_all"
+}
+
+# =============================================================================
+# Main selection logic
+# =============================================================================
+SELECTION_CANCELLED=false
+
+if [[ "$USE_FZF" == true ]] && has_command fzf; then
+    if ! run_fzf_selection; then
+        SELECTION_CANCELLED=true
+    fi
+else
+    if [[ "$USE_FZF" == true ]] && ! has_command fzf; then
+        warn "fzf not found, falling back to simple prompts"
+        warn "Install fzf for a better experience: brew install fzf"
+        echo ""
+    fi
+    run_simple_prompts
+fi
+
+# =============================================================================
+# Summary and cleanup
+# =============================================================================
+echo ""
+info "Summary: $ADDED_COUNT added, $SKIPPED_COUNT skipped"
+
+if [[ "$SELECTION_CANCELLED" != true && "$RUN_SORT" == true && $ADDED_COUNT -gt 0 ]]; then
+    echo ""
+    info "Running sort-brewfile to organize changes..."
+    if [[ "$DRY_RUN" == true ]]; then
+        "$DOTFILES_ROOT/script/sort-brewfile" --dry-run
+    else
+        "$DOTFILES_ROOT/script/sort-brewfile"
+    fi
+fi
+
+if [[ "$DRY_RUN" == true ]]; then
+    echo ""
+    info "Dry-run complete. No changes were made."
+fi

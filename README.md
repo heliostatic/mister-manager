@@ -22,7 +22,9 @@ dotfiles/
 │   ├── takeover               # Adopts existing files into repo
 │   ├── secrets                # Unified secrets retrieval
 │   ├── secrets-setup          # Interactive secrets migration
-│   └── lib.sh                 # Shared functions
+│   ├── lib.sh                 # Shared functions
+│   ├── sort-brewfile          # Sorts Brewfile, manages pending
+│   └── brew-audit             # Find untracked Homebrew packages
 ├── test/                      # Smoke tests
 │   └── smoke.sh
 ├── bin/                       # Custom scripts (→ ~/.bin)
@@ -414,6 +416,40 @@ id_rsa|SSH Key - RSA
 | Shell | fish (Homebrew) | fish (package manager) |
 
 The bootstrap script auto-detects OS and runs appropriate installers.
+
+### Homebrew Packages (macOS)
+
+Packages are defined in `macos/Brewfile`. Use standard Homebrew Bundle commands:
+
+```bash
+brew bundle install --file=macos/Brewfile   # Install all packages
+brew bundle check --file=macos/Brewfile     # Check what's missing
+brew bundle cleanup --file=macos/Brewfile   # Remove unlisted packages
+```
+
+#### Auditing Installed Packages
+
+Find packages you've installed but haven't added to your Brewfile:
+
+```bash
+./script/brew-audit              # Interactive (uses fzf if available)
+./script/brew-audit --dry-run    # Preview without changes
+./script/brew-audit --no-fzf     # Use simple y/n prompts
+```
+
+With fzf: Use Tab to select packages to add, Enter to confirm.
+Unselected packages go to `Brewfile.pending` and won't be prompted again.
+
+#### Sorting and Pending
+
+```bash
+./script/sort-brewfile           # Sort Brewfile alphabetically
+./script/sort-brewfile --dry-run # Preview changes
+```
+
+- Commented-out entries in Brewfile move to `Brewfile.pending`
+- Uncommented entries in pending restore to Brewfile
+- Inline comments (e.g., `brew "bat" # syntax highlighting`) are preserved
 
 ### Linux Packages
 
