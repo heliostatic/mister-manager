@@ -1,0 +1,60 @@
+cask_args appdir: '/Applications'
+
+# =============================================================================
+# Essential CLI tools
+# =============================================================================
+brew 'bat'            # cat with syntax highlighting
+brew 'coreutils'      # GNU core utilities
+brew 'eza'            # modern ls replacement
+brew 'fd'             # fast find replacement
+brew 'fish'           # friendly shell (or keep zsh)
+brew 'fzf'            # fuzzy finder (used by brew-audit)
+brew 'gh'             # GitHub CLI
+brew 'jq'             # JSON processor
+brew 'ripgrep'        # fast grep replacement
+brew 'tmux'           # terminal multiplexer
+brew 'tree'           # directory listing
+brew 'wget'           # HTTP file retriever
+brew 'zoxide'         # smart cd replacement
+
+# =============================================================================
+# Editor (pick one)
+# =============================================================================
+brew 'neovim'         # modern vim
+
+# =============================================================================
+# Git tools
+# =============================================================================
+brew 'diff-so-fancy'  # better git diff
+brew 'lazygit'        # terminal UI for git
+
+# =============================================================================
+# Development (uncomment as needed)
+# =============================================================================
+# brew 'go'
+# brew 'node'
+# brew 'rustup'
+
+# =============================================================================
+# Optional CLI tools (uncomment as needed)
+# =============================================================================
+# brew 'btop'         # system monitor
+# brew 'dust'         # disk usage
+# brew 'glow'         # markdown viewer
+# brew 'hyperfine'    # benchmarking
+# brew 'tealdeer'     # tldr pages
+
+# =============================================================================
+# Casks (uncomment as needed)
+# =============================================================================
+# cask '1password'
+# cask '1password-cli'
+# cask 'raycast'      # launcher
+# cask 'rectangle'    # window management
+# cask 'ghostty'      # terminal
+
+# =============================================================================
+# Fonts (uncomment as needed)
+# =============================================================================
+# cask 'font-fira-code-nerd-font'
+# cask 'font-jetbrains-mono'

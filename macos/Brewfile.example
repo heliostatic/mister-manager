@@ -78,3 +78,9 @@ brew "gh"             # GitHub CLI
 #
 # Export current packages to Brewfile:
 #   brew bundle dump --file=macos/Brewfile
+
+# Audit installed packages (find untracked packages):
+#   ./script/brew-audit
+#
+# Inline comments are preserved by sort-brewfile:
+#   brew "bat"    # this comment survives sorting
