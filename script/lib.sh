@@ -65,10 +65,18 @@ acquire_lock() {
     for attempt in 1 2; do
         if mkdir "$LOCKDIR" 2>/dev/null; then
             echo $$ > "$LOCKDIR/pid"
-            # Cover signals explicitly so a Ctrl-C / kill reliably triggers
-            # release_lock — depending on the running child command, INT/TERM
-            # may not always cascade through to the EXIT trap.
-            trap 'release_lock' EXIT INT TERM HUP
+            # On a clean exit, EXIT runs release_lock.
+            # On a signal, bash's default is to *run the trap and then resume*
+            # the script. If we only released the lock, bootstrap would
+            # continue mutating dotfiles after the lockdir was gone — and a
+            # second bootstrap could grab the lock and race us. So the
+            # signal traps release AND exit with the conventional 128+signum
+            # status. The EXIT trap then fires a second time, but
+            # release_lock is idempotent (rm with `|| true`).
+            trap 'release_lock' EXIT
+            trap 'release_lock; exit 130' INT
+            trap 'release_lock; exit 143' TERM
+            trap 'release_lock; exit 129' HUP
             return 0
         fi
 
