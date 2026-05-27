@@ -19,7 +19,7 @@
 #   ADDED_COUNT      counter (mutated)
 #   SKIPPED_COUNT    counter (mutated)
 #
-# Requires lib.sh to be sourced first for `fail` / `success`.
+# Requires lib.sh to be sourced first for `fail`.
 #
 # Single-writer assumption: the lazy header / separator logic in
 # add_to_pending checks $PENDING with `[[ -s ... ]]` at first-skip time.
@@ -31,6 +31,10 @@
 # Stage an addition to Brewfile.
 add_to_brewfile() {
     : "${BREWFILE_STAGED:?required by brew-audit.lib.sh}"
+    # Defensive init: bash treats unset numeric as 0 in arithmetic, but
+    # we'd rather a caller-forgot-to-init regression surface as "0 added"
+    # than as state bleeding from some other context.
+    : "${ADDED_COUNT:=0}"
     local entry="$1"  # e.g. "brew 'foo'"
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -53,6 +57,7 @@ add_to_brewfile() {
 add_to_pending() {
     : "${PENDING:?required by brew-audit.lib.sh}"
     : "${PENDING_STAGED:?required by brew-audit.lib.sh}"
+    : "${SKIPPED_COUNT:=0}"
     local entry="$1"  # e.g. "brew 'foo'"
 
     if [[ "$DRY_RUN" == true ]]; then

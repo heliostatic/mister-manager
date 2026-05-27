@@ -60,6 +60,39 @@ verbose() {
     fi
 }
 
+# Read PASS:/FAIL: lines a subshell wrote to $1 and replay them as pass/fail
+# in the parent — needed because pass/fail mutate counters and any
+# `( … ) | while read` pattern scopes those mutations to the pipe subshell
+# (the visible ✓/✗ would print, but $PASSED/$FAILED would never advance).
+#
+# Also verifies a sentinel line was emitted: if the subshell died early, the
+# loop would otherwise see nothing, run zero iterations, and silently report
+# "test passed."
+#
+# Caller pattern:
+#   tmpresults=$(mktemp)
+#   ( … ; echo "PASS:my_sentinel" ) > "$tmpresults"
+#   replay_subshell_results "$tmpresults" "my_sentinel"
+replay_subshell_results() {
+    local tmpresults="$1"
+    local sentinel="$2"
+    local saw_sentinel=false
+    local result status name
+    while read -r result; do
+        status="${result%%:*}"
+        name="${result#*:}"
+        [[ "$name" == "$sentinel" ]] && saw_sentinel=true
+        if [[ "$status" == "PASS" ]]; then
+            pass "$name"
+        else
+            fail "$name"
+        fi
+    done < "$tmpresults"
+    rm -f "$tmpresults"
+    [[ "$saw_sentinel" == true ]] \
+        || fail "subshell aborted before sentinel '$sentinel'"
+}
+
 # Run a command with timeout and check exit code matches `expected` EXACTLY.
 # A loose "any non-zero" check would let exit 127 (command not found) or 126
 # (not executable) pass as if it were the validation error we asked for.
@@ -300,29 +333,11 @@ test_lib_functions() {
 
         rm -rf "$tmp"
 
-        # Sentinel: if the subshell died before reaching this (lib.sh missing,
-        # source failed, etc.), the parent's while-read sees zero lines and
-        # would otherwise report "test passed" while asserting nothing.
+        # Sentinel — replay_subshell_results uses this to detect early aborts.
         echo "PASS:lib_functions_completed"
     ) > "$tmpresults"
 
-    local saw_sentinel=false
-    while read -r result; do
-        local status="${result%%:*}"
-        local name="${result#*:}"
-        [[ "$name" == "lib_functions_completed" ]] && saw_sentinel=true
-        if [[ "$status" == "PASS" ]]; then
-            pass "$name"
-        else
-            fail "$name"
-        fi
-    done < "$tmpresults"
-
-    rm -f "$tmpresults"
-
-    if [[ "$saw_sentinel" != true ]]; then
-        fail "test_lib_functions subshell aborted before completion"
-    fi
+    replay_subshell_results "$tmpresults" "lib_functions_completed"
 }
 
 test_completions() {
@@ -621,31 +636,11 @@ test_brew_audit_staging() {
 
         rm -rf "$sandbox"
 
-        # Sentinel: if anything above blew up the subshell early, the read
-        # loop in the parent reports the missing sentinel as a failure
-        # (otherwise pass/fail's counter increments — which are scoped to
-        # the temp-file hand-off below, not the pipe subshell — would still
-        # be counted correctly).
+        # Sentinel — replay_subshell_results uses this to detect early aborts.
         echo "PASS:staging_test_completed"
     ) > "$tmpresults"
 
-    local saw_sentinel=false
-    while read -r result; do
-        local status="${result%%:*}"
-        local name="${result#*:}"
-        [[ "$name" == "staging_test_completed" ]] && saw_sentinel=true
-        if [[ "$status" == "PASS" ]]; then
-            pass "$name"
-        else
-            fail "$name"
-        fi
-    done < "$tmpresults"
-
-    rm -f "$tmpresults"
-
-    if [[ "$saw_sentinel" != true ]]; then
-        fail "test_brew_audit_staging subshell aborted before completion"
-    fi
+    replay_subshell_results "$tmpresults" "staging_test_completed"
 }
 
 test_brew_audit_dry_run() {
