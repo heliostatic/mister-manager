@@ -486,6 +486,152 @@ test_sort_brewfile() {
     fi
 }
 
+test_brew_audit_staging() {
+    section "brew-audit staging lib"
+
+    # Drive add_to_pending / add_to_brewfile / commit_appends directly by
+    # sourcing brew-audit.lib.sh. Bypasses the interactive selection loop
+    # (which reads from /dev/tty and is hard to fake in CI) and lets us
+    # actually exercise the lazy-header, separator, recovery, and dry-run
+    # paths that smoke previously couldn't reach.
+    local tmpresults
+    tmpresults=$(mktemp)
+
+    (
+        export DOTFILES_LOG=none
+        source "$DOTFILES_ROOT/script/lib.sh"
+        source "$DOTFILES_ROOT/script/brew-audit.lib.sh"
+
+        local sandbox
+        sandbox=$(mktemp -d)
+        BREWFILE="$sandbox/Brewfile"
+        PENDING="$sandbox/Brewfile.pending"
+        BREWFILE_STAGED="$sandbox/staged_brew"
+        PENDING_STAGED="$sandbox/staged_pending"
+        touch "$BREWFILE" "$PENDING" "$BREWFILE_STAGED" "$PENDING_STAGED"
+        DRY_RUN=false
+        GRAY=""
+        NC=""
+        ADDED_COUNT=0
+        SKIPPED_COUNT=0
+
+        # First skip writes the lazy batch header
+        add_to_pending "tap 'foo'"
+        if grep -q "^# Skipped by brew-audit on" "$PENDING_STAGED" \
+            && grep -qF "# tap 'foo'" "$PENDING_STAGED"; then
+            echo "PASS:staging_lazy_header_written_on_first_skip"
+        else
+            echo "FAIL:staging_lazy_header_written_on_first_skip"
+        fi
+
+        # Subsequent skips don't add another header
+        add_to_pending "brew 'bar'"
+        add_to_pending "cask 'baz'"
+        local header_count
+        header_count=$(grep -c "^# Skipped by brew-audit on" "$PENDING_STAGED")
+        if [[ "$header_count" == "1" ]]; then
+            echo "PASS:staging_one_header_per_batch"
+        else
+            echo "FAIL:staging_one_header_per_batch (got $header_count headers)"
+        fi
+
+        # Counter tracks calls correctly
+        if [[ "$SKIPPED_COUNT" == "3" ]]; then
+            echo "PASS:staging_skipped_counter"
+        else
+            echo "FAIL:staging_skipped_counter (got $SKIPPED_COUNT)"
+        fi
+
+        # commit_appends flushes staging to the real PENDING
+        commit_appends
+        if grep -qF "# tap 'foo'" "$PENDING" \
+            && grep -qF "# brew 'bar'" "$PENDING" \
+            && grep -qF "# cask 'baz'" "$PENDING"; then
+            echo "PASS:staging_commit_flushes_to_real_pending"
+        else
+            echo "FAIL:staging_commit_flushes_to_real_pending"
+        fi
+
+        # Second run: PENDING is non-empty, so staging starts with a blank
+        # separator line
+        : > "$PENDING_STAGED"
+        add_to_pending "brew 'qux'"
+        local first_line
+        first_line=$(head -1 "$PENDING_STAGED")
+        if [[ -z "$first_line" ]]; then
+            echo "PASS:staging_blank_separator_when_pending_has_content"
+        else
+            echo "FAIL:staging_blank_separator_when_pending_has_content (first line: '$first_line')"
+        fi
+
+        # add_to_brewfile increments the addition counter and writes to staging
+        ADDED_COUNT=0
+        add_to_brewfile "brew 'added-thing'"
+        if [[ "$ADDED_COUNT" == "1" ]] \
+            && grep -qF "brew 'added-thing'" "$BREWFILE_STAGED"; then
+            echo "PASS:staging_add_to_brewfile"
+        else
+            echo "FAIL:staging_add_to_brewfile"
+        fi
+
+        # Recovery path: make PENDING read-only so commit_appends fails its
+        # cat-append, then verify a .unsaved.<ts> recovery file is created.
+        # Reset staging and put fresh content there.
+        : > "$PENDING_STAGED"
+        add_to_pending "brew 'recovery-target'"
+        chmod 444 "$PENDING"
+        # commit_appends calls fail() on error, which exits — run it in a
+        # subshell so the test loop survives.
+        (commit_appends) >/dev/null 2>&1
+        chmod 644 "$PENDING"
+        local recovery
+        recovery=$(ls "${PENDING}".unsaved.* 2>/dev/null | head -1)
+        if [[ -n "$recovery" && -f "$recovery" ]] \
+            && grep -qF "# brew 'recovery-target'" "$recovery"; then
+            echo "PASS:staging_recovery_on_write_failure"
+        else
+            echo "FAIL:staging_recovery_on_write_failure"
+        fi
+
+        # Dry-run path doesn't touch staging
+        DRY_RUN=true
+        : > "$PENDING_STAGED"
+        add_to_pending "brew 'dryrun-skipped'" >/dev/null
+        if [[ ! -s "$PENDING_STAGED" ]]; then
+            echo "PASS:staging_dry_run_does_not_write"
+        else
+            echo "FAIL:staging_dry_run_does_not_write"
+        fi
+
+        rm -rf "$sandbox"
+
+        # Sentinel: if anything above blew up the subshell early, the read
+        # loop in the parent reports the missing sentinel as a failure
+        # (otherwise pass/fail's counter increments — which are scoped to
+        # the temp-file hand-off below, not the pipe subshell — would still
+        # be counted correctly).
+        echo "PASS:staging_test_completed"
+    ) > "$tmpresults"
+
+    local saw_sentinel=false
+    while read -r result; do
+        local status="${result%%:*}"
+        local name="${result#*:}"
+        [[ "$name" == "staging_test_completed" ]] && saw_sentinel=true
+        if [[ "$status" == "PASS" ]]; then
+            pass "$name"
+        else
+            fail "$name"
+        fi
+    done < "$tmpresults"
+
+    rm -f "$tmpresults"
+
+    if [[ "$saw_sentinel" != true ]]; then
+        fail "test_brew_audit_staging subshell aborted before completion"
+    fi
+}
+
 test_brew_audit_dry_run() {
     section "brew-audit --dry-run"
 
@@ -553,6 +699,7 @@ main() {
     test_linux_packages
     test_idempotency
     test_sort_brewfile
+    test_brew_audit_staging
     test_brew_audit_dry_run
 
     # Summary
