@@ -15,8 +15,10 @@
 set -e
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BREWFILE="$DOTFILES_ROOT/macos/Brewfile"
-PENDING="$DOTFILES_ROOT/macos/Brewfile.pending"
+# Env overrides let the smoke suite point at a temp Brewfile without
+# touching the real one. Default to the in-repo path.
+BREWFILE="${BREWFILE:-$DOTFILES_ROOT/macos/Brewfile}"
+PENDING="${PENDING:-$DOTFILES_ROOT/macos/Brewfile.pending}"
 
 DRY_RUN="${DRY_RUN:-false}"
 [[ "$1" == "-n" || "$1" == "--dry-run" ]] && DRY_RUN=true

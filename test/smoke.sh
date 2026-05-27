@@ -194,6 +194,14 @@ test_secrets() {
 
     check_output "secrets list" "$DOTFILES_ROOT/script/secrets" list
 
+    # Argument-parsing tests for `secrets get` — no backend required.
+    check_exit "secrets get with no name fails" 1 \
+        "$DOTFILES_ROOT/script/secrets" get
+    check_exit "secrets get --refresh with no name fails" 1 \
+        "$DOTFILES_ROOT/script/secrets" get --refresh
+    check_exit "secrets get rejects unknown flag" 1 \
+        "$DOTFILES_ROOT/script/secrets" get --bogus foo
+
     # Validate requires 1Password signed in AND items to exist
     # This is more of an integration test - skip in smoke tests
     # since it depends on user's 1Password vault contents
@@ -251,6 +259,41 @@ test_lib_functions() {
         else
             echo "FAIL:has_command_false"
         fi
+
+        # Test find_latest_backup: pure helper, easy to exercise directly
+        local tmp base got
+        tmp=$(mktemp -d)
+        base="$tmp/foo"
+
+        # Empty case: no backups, no output
+        got=$(find_latest_backup "$base")
+        if [[ -z "$got" ]]; then
+            echo "PASS:find_latest_backup_empty"
+        else
+            echo "FAIL:find_latest_backup_empty"
+        fi
+
+        # Single backup: returns it
+        touch "$base.backup.20250101-120000.1-1"
+        got=$(find_latest_backup "$base")
+        if [[ "$got" == "$base.backup.20250101-120000.1-1" ]]; then
+            echo "PASS:find_latest_backup_single"
+        else
+            echo "FAIL:find_latest_backup_single"
+        fi
+
+        # Multiple backups: picks newest by timestamp (lexicographic on the
+        # YYYYMMDD-HHMMSS prefix). 2026 > 2025 > 2024.
+        touch "$base.backup.20240101-000000.1-1"
+        touch "$base.backup.20260101-120000.1-1"
+        got=$(find_latest_backup "$base")
+        if [[ "$got" == "$base.backup.20260101-120000.1-1" ]]; then
+            echo "PASS:find_latest_backup_newest"
+        else
+            echo "FAIL:find_latest_backup_newest"
+        fi
+
+        rm -rf "$tmp"
     ) | while read -r result; do
         local status="${result%%:*}"
         local name="${result#*:}"
@@ -362,33 +405,32 @@ test_sort_brewfile() {
         skip "Brewfile not present"
     fi
 
-    # Test comment migration (in temp copy)
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-    trap "rm -rf '$tmp_dir'" RETURN
+    # Tab handling: entries indented with tabs should survive sorting.
+    # Before the [[:space:]] fix, `^brew ` (literal space) would silently
+    # drop a tab-indented `brew\t"foo"` entry.
+    local tab_tmp
+    tab_tmp=$(mktemp -d)
+    # printf %b interprets the \t; the resulting file mixes tab and space indents.
+    printf '%b' 'tap "homebrew/bundle"\nbrew\t"alpha"\nbrew "beta"\ncask\t"appone"\n' \
+        > "$tab_tmp/Brewfile"
+    touch "$tab_tmp/Brewfile.pending"
 
-    # Create test Brewfile
-    cat > "$tmp_dir/Brewfile" << 'EOF'
-cask_args appdir: '/Applications'
+    BREWFILE="$tab_tmp/Brewfile" PENDING="$tab_tmp/Brewfile.pending" \
+        timeout 10 "$script" >/dev/null 2>&1
 
-tap 'test/tap'
-
-brew 'zzz'
-brew 'aaa'
-# brew 'pending-package'
-EOF
-    touch "$tmp_dir/Brewfile.pending"
-
-    # Run sort-brewfile on temp files (need to temporarily override paths)
-    (
-        cd "$tmp_dir"
-        BREWFILE="$tmp_dir/Brewfile"
-        PENDING="$tmp_dir/Brewfile.pending"
-        export BREWFILE PENDING
-
-        # Inline the sort logic test - just verify the script runs
-        # We can't easily override the paths in the script, so test behavior manually
-    )
+    # Match a literal tab between `brew` and the quoted name. ANSI-C
+    # quoting ($'\t') is bash 2.0+ so safe everywhere we run.
+    if grep -q $'^brew\t"alpha"' "$tab_tmp/Brewfile"; then
+        pass "sort-brewfile preserves tab-indented brew entry"
+    else
+        fail "sort-brewfile dropped tab-indented brew entry"
+    fi
+    if grep -q '"beta"' "$tab_tmp/Brewfile"; then
+        pass "sort-brewfile preserves space-indented brew entry"
+    else
+        fail "sort-brewfile dropped space-indented brew entry"
+    fi
+    rm -rf "$tab_tmp"
 
     # Verify sorting works by checking order
     if [[ -f "$brewfile" ]]; then
@@ -419,6 +461,44 @@ EOF
     fi
 }
 
+test_brew_audit_dry_run() {
+    section "brew-audit --dry-run"
+
+    if ! command -v brew &>/dev/null; then
+        skip "brew not installed"
+        return
+    fi
+
+    local script="$DOTFILES_ROOT/script/brew-audit"
+    local tmp
+    tmp=$(mktemp -d)
+
+    # Seed the temp Brewfile with the current installed taps so the audit
+    # finds nothing untracked for --type tap and exits early — no fzf, no
+    # prompts. Even if something does turn up untracked, --dry-run must
+    # not mutate the Brewfile; that's what we verify.
+    brew tap 2>/dev/null | while IFS= read -r t; do
+        printf 'tap "%s"\n' "$t"
+    done > "$tmp/Brewfile"
+    touch "$tmp/Brewfile.pending"
+
+    local before after
+    before=$(shasum "$tmp/Brewfile" | awk '{print $1}')
+
+    BREWFILE="$tmp/Brewfile" PENDING="$tmp/Brewfile.pending" \
+        timeout 30 "$script" --dry-run --type tap --no-fzf </dev/null >/dev/null 2>&1 || true
+
+    after=$(shasum "$tmp/Brewfile" | awk '{print $1}')
+
+    if [[ "$before" == "$after" ]]; then
+        pass "brew-audit --dry-run leaves Brewfile unchanged"
+    else
+        fail "brew-audit --dry-run mutated Brewfile"
+    fi
+
+    rm -rf "$tmp"
+}
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -438,6 +518,7 @@ main() {
     test_linux_packages
     test_idempotency
     test_sort_brewfile
+    test_brew_audit_dry_run
 
     # Summary
     section "Summary"
