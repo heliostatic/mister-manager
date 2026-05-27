@@ -120,6 +120,13 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
+# Staging files for additions - writes accumulate here and only land in
+# the real files after selection completes. Means a Ctrl-C mid-selection
+# can't leave the Brewfile half-mutated (and unsorted).
+BREWFILE_STAGED="$TMP/brewfile_staged"
+PENDING_STAGED="$TMP/pending_staged"
+touch "$BREWFILE_STAGED" "$PENDING_STAGED"
+
 # =============================================================================
 # Parse Brewfile and Brewfile.pending
 # =============================================================================
@@ -255,23 +262,35 @@ add_to_brewfile() {
     if [[ "$DRY_RUN" == true ]]; then
         printf "${GRAY}  [dry-run]${NC} Would add: %s\n" "$entry"
     else
-        echo "$entry" >> "$BREWFILE"
+        echo "$entry" >> "$BREWFILE_STAGED"
     fi
     ADDED_COUNT=$((ADDED_COUNT + 1))
 }
 
 add_to_pending() {
     local entry="$1"  # e.g., "brew 'foo'"
-    local date
-    date=$(date +%Y-%m-%d)
 
     if [[ "$DRY_RUN" == true ]]; then
         printf "${GRAY}  [dry-run]${NC} Would skip: # %s\n" "$entry"
     else
-        echo "# Skipped by brew-audit on $date" >> "$PENDING"
-        echo "# ${entry}" >> "$PENDING"
+        local date
+        date=$(date +%Y-%m-%d)
+        printf '# Skipped by brew-audit on %s\n# %s\n' "$date" "$entry" >> "$PENDING_STAGED"
     fi
     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+}
+
+# Flush staged additions to the real Brewfile / Brewfile.pending.
+# Called once after selection completes, so a partial run leaves the
+# tracked files untouched.
+commit_appends() {
+    [[ "$DRY_RUN" == true ]] && return 0
+    if [[ -s "$BREWFILE_STAGED" ]]; then
+        cat "$BREWFILE_STAGED" >> "$BREWFILE"
+    fi
+    if [[ -s "$PENDING_STAGED" ]]; then
+        cat "$PENDING_STAGED" >> "$PENDING"
+    fi
 }
 
 # =============================================================================
@@ -391,6 +410,13 @@ else
         echo ""
     fi
     run_simple_prompts
+fi
+
+# Flush staged appends to the real files now that selection is complete.
+# If the script dies before this point (Ctrl-C in fzf, mid-prompt crash),
+# the staging files get cleaned up by the EXIT trap and Brewfile is untouched.
+if [[ "$SELECTION_CANCELLED" != true ]]; then
+    commit_appends
 fi
 
 # =============================================================================
