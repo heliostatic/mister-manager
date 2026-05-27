@@ -15,8 +15,10 @@
 set -e
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BREWFILE="$DOTFILES_ROOT/macos/Brewfile"
-PENDING="$DOTFILES_ROOT/macos/Brewfile.pending"
+# Env overrides let the smoke suite point at a temp Brewfile without
+# touching the real one. Default to the in-repo path.
+BREWFILE="${BREWFILE:-$DOTFILES_ROOT/macos/Brewfile}"
+PENDING="${PENDING:-$DOTFILES_ROOT/macos/Brewfile.pending}"
 
 DRY_RUN="${DRY_RUN:-false}"
 [[ "$1" == "-n" || "$1" == "--dry-run" ]] && DRY_RUN=true
@@ -106,17 +108,24 @@ fi
 # Start with current Brewfile minus commented-out package entries and section comments
 # Keep: cask_args, active entries, inline comments on active entries
 # Remove: commented-out entries, standalone section comment lines
+# NOTE: Standalone comment lines (e.g. "# Editors") are stripped by design;
+# the section-bucket greps below only re-emit recognized entry types, so any
+# preserved loose comment would lose its association with the package below it.
+# If you want to keep notes in your Brewfile, attach them inline:
+#   brew "foo"   # note here
 grep -vE "$COMMENTED_PATTERN" "$BREWFILE" | grep -vE '^#' | grep -v '^$' > "$TMP/active" || true
 
 # Add restored entries from pending
 cat "$TMP/to_brewfile" >> "$TMP/active" 2>/dev/null || true
 
-# Extract each section
+# Extract each section.
+# Use [[:space:]] (not a literal space) so entries indented with tabs land
+# in the right bucket instead of being silently dropped.
 grep -E '^cask_args' "$TMP/active" | sort -u > "$TMP/cask_args" || true
-grep -E '^tap ' "$TMP/active" | sort -u > "$TMP/taps" || true
-grep -E '^brew ' "$TMP/active" | sort -u > "$TMP/brews" || true
-grep -E '^cask ' "$TMP/active" | sort -u > "$TMP/casks" || true
-grep -E '^mas ' "$TMP/active" | sort -u > "$TMP/mas" || true
+grep -E '^tap[[:space:]]' "$TMP/active" | sort -u > "$TMP/taps" || true
+grep -E '^brew[[:space:]]' "$TMP/active" | sort -u > "$TMP/brews" || true
+grep -E '^cask[[:space:]]' "$TMP/active" | sort -u > "$TMP/casks" || true
+grep -E '^mas[[:space:]]' "$TMP/active" | sort -u > "$TMP/mas" || true
 
 # Reassemble
 {

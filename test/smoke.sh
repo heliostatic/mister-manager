@@ -60,28 +60,24 @@ verbose() {
     fi
 }
 
-# Run a command with timeout and check exit code
+# Run a command with timeout and check exit code matches `expected` EXACTLY.
+# A loose "any non-zero" check would let exit 127 (command not found) or 126
+# (not executable) pass as if it were the validation error we asked for.
 check_exit() {
     local name="$1"
     local expected="$2"
     shift 2
 
     verbose "Running: $*"
-    if timeout 30 "$@" &>/dev/null; then
-        if [[ "$expected" == "0" ]]; then
-            pass "$name"
-        else
-            fail "$name (expected exit $expected, got 0)"
-        fi
+    timeout 30 "$@" &>/dev/null
+    local code=$?
+
+    if [[ $code -eq 124 ]]; then
+        fail "$name (timeout)"
+    elif [[ "$code" == "$expected" ]]; then
+        pass "$name"
     else
-        local code=$?
-        if [[ $code -eq 124 ]]; then
-            fail "$name (timeout)"
-        elif [[ "$expected" == "0" ]]; then
-            fail "$name (exit code $code)"
-        else
-            pass "$name"
-        fi
+        fail "$name (expected exit $expected, got $code)"
     fi
 }
 
@@ -194,6 +190,14 @@ test_secrets() {
 
     check_output "secrets list" "$DOTFILES_ROOT/script/secrets" list
 
+    # Argument-parsing tests for `secrets get` — no backend required.
+    check_exit "secrets get with no name fails" 1 \
+        "$DOTFILES_ROOT/script/secrets" get
+    check_exit "secrets get --refresh with no name fails" 1 \
+        "$DOTFILES_ROOT/script/secrets" get --refresh
+    check_exit "secrets get rejects unknown flag" 1 \
+        "$DOTFILES_ROOT/script/secrets" get --bogus foo
+
     # Validate requires 1Password signed in AND items to exist
     # This is more of an integration test - skip in smoke tests
     # since it depends on user's 1Password vault contents
@@ -224,7 +228,16 @@ test_secrets() {
 test_lib_functions() {
     section "Library Functions"
 
-    # Source lib.sh in a subshell to avoid polluting our environment
+    # Source lib.sh in a subshell to avoid polluting our environment.
+    # Run the subshell with output redirected to a temp file, then read
+    # results in the *parent* shell — if we piped (`| while`), pass/fail's
+    # counter increments would be scoped to the pipe subshell and never
+    # reach $PASSED/$FAILED. (Bash 3.2 also rejects process substitution
+    # `<(…)` here because the subshell uses `local`, which only works
+    # inside a function body and not under process substitution on 3.2.)
+    local tmpresults
+    tmpresults=$(mktemp)
+
     (
         # Temporarily disable logging for tests
         export DOTFILES_LOG=none
@@ -251,15 +264,65 @@ test_lib_functions() {
         else
             echo "FAIL:has_command_false"
         fi
-    ) | while read -r result; do
+
+        # Test find_latest_backup: pure helper, easy to exercise directly
+        local tmp base got
+        tmp=$(mktemp -d)
+        base="$tmp/foo"
+
+        # Empty case: no backups, no output
+        got=$(find_latest_backup "$base")
+        if [[ -z "$got" ]]; then
+            echo "PASS:find_latest_backup_empty"
+        else
+            echo "FAIL:find_latest_backup_empty"
+        fi
+
+        # Single backup: returns it
+        touch "$base.backup.20250101-120000.1-1"
+        got=$(find_latest_backup "$base")
+        if [[ "$got" == "$base.backup.20250101-120000.1-1" ]]; then
+            echo "PASS:find_latest_backup_single"
+        else
+            echo "FAIL:find_latest_backup_single"
+        fi
+
+        # Multiple backups: picks newest by timestamp (lexicographic on the
+        # YYYYMMDD-HHMMSS prefix). 2026 > 2025 > 2024.
+        touch "$base.backup.20240101-000000.1-1"
+        touch "$base.backup.20260101-120000.1-1"
+        got=$(find_latest_backup "$base")
+        if [[ "$got" == "$base.backup.20260101-120000.1-1" ]]; then
+            echo "PASS:find_latest_backup_newest"
+        else
+            echo "FAIL:find_latest_backup_newest"
+        fi
+
+        rm -rf "$tmp"
+
+        # Sentinel: if the subshell died before reaching this (lib.sh missing,
+        # source failed, etc.), the parent's while-read sees zero lines and
+        # would otherwise report "test passed" while asserting nothing.
+        echo "PASS:lib_functions_completed"
+    ) > "$tmpresults"
+
+    local saw_sentinel=false
+    while read -r result; do
         local status="${result%%:*}"
         local name="${result#*:}"
+        [[ "$name" == "lib_functions_completed" ]] && saw_sentinel=true
         if [[ "$status" == "PASS" ]]; then
             pass "$name"
         else
             fail "$name"
         fi
-    done
+    done < "$tmpresults"
+
+    rm -f "$tmpresults"
+
+    if [[ "$saw_sentinel" != true ]]; then
+        fail "test_lib_functions subshell aborted before completion"
+    fi
 }
 
 test_completions() {
@@ -316,7 +379,12 @@ test_idempotency() {
     count1=$(timeout 30 "$DOTFILES_ROOT/script/bootstrap" --symlinks-only --dry-run 2>&1 | grep -o "[0-9]* operation" | grep -o "[0-9]*" || echo "0")
     count2=$(timeout 30 "$DOTFILES_ROOT/script/bootstrap" --symlinks-only --dry-run 2>&1 | grep -o "[0-9]* operation" | grep -o "[0-9]*" || echo "0")
 
-    if [[ "$count1" == "$count2" ]]; then
+    # Require an actual positive count first — otherwise "0 == 0 ✓ pass" hides
+    # the case where bootstrap crashed before printing the operation summary
+    # (e.g. missing `timeout`, or someone reworded the message).
+    if ! [[ "$count1" =~ ^[1-9][0-9]*$ ]]; then
+        fail "dry-run produced no operation count (got '$count1' — did bootstrap actually run?)"
+    elif [[ "$count1" == "$count2" ]]; then
         pass "dry-run is idempotent ($count1 operations)"
     else
         fail "dry-run not idempotent ($count1 vs $count2)"
@@ -362,33 +430,32 @@ test_sort_brewfile() {
         skip "Brewfile not present"
     fi
 
-    # Test comment migration (in temp copy)
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-    trap "rm -rf '$tmp_dir'" RETURN
+    # Tab handling: both tab- and space-indented brew entries must survive
+    # the sort. Guards against a regression where the section-bucket regex
+    # matches only a literal space and silently drops tab-indented lines.
+    local tab_tmp
+    tab_tmp=$(mktemp -d)
+    # printf %b interprets the \t; the resulting file mixes tab and space indents.
+    printf '%b' 'tap "homebrew/bundle"\nbrew\t"alpha"\nbrew "beta"\ncask\t"appone"\n' \
+        > "$tab_tmp/Brewfile"
+    touch "$tab_tmp/Brewfile.pending"
 
-    # Create test Brewfile
-    cat > "$tmp_dir/Brewfile" << 'EOF'
-cask_args appdir: '/Applications'
+    BREWFILE="$tab_tmp/Brewfile" PENDING="$tab_tmp/Brewfile.pending" \
+        timeout 10 "$script" >/dev/null 2>&1
 
-tap 'test/tap'
-
-brew 'zzz'
-brew 'aaa'
-# brew 'pending-package'
-EOF
-    touch "$tmp_dir/Brewfile.pending"
-
-    # Run sort-brewfile on temp files (need to temporarily override paths)
-    (
-        cd "$tmp_dir"
-        BREWFILE="$tmp_dir/Brewfile"
-        PENDING="$tmp_dir/Brewfile.pending"
-        export BREWFILE PENDING
-
-        # Inline the sort logic test - just verify the script runs
-        # We can't easily override the paths in the script, so test behavior manually
-    )
+    # Match a literal tab between `brew` and the quoted name. ANSI-C
+    # quoting ($'\t') is bash 2.0+ so safe everywhere we run.
+    if grep -q $'^brew\t"alpha"' "$tab_tmp/Brewfile"; then
+        pass "sort-brewfile preserves tab-indented brew entry"
+    else
+        fail "sort-brewfile dropped tab-indented brew entry"
+    fi
+    if grep -q '"beta"' "$tab_tmp/Brewfile"; then
+        pass "sort-brewfile preserves space-indented brew entry"
+    else
+        fail "sort-brewfile dropped space-indented brew entry"
+    fi
+    rm -rf "$tab_tmp"
 
     # Verify sorting works by checking order
     if [[ -f "$brewfile" ]]; then
@@ -419,6 +486,54 @@ EOF
     fi
 }
 
+test_brew_audit_dry_run() {
+    section "brew-audit --dry-run"
+
+    if ! command -v brew &>/dev/null; then
+        skip "brew not installed"
+        return
+    fi
+
+    local script="$DOTFILES_ROOT/script/brew-audit"
+    local tmp
+    tmp=$(mktemp -d)
+
+    # Seed the temp Brewfile with the current installed taps so the audit
+    # finds nothing untracked for --type tap and exits early — no fzf, no
+    # prompts. Even if something does turn up untracked, --dry-run must
+    # not mutate the Brewfile; that's what we verify.
+    brew tap 2>/dev/null | while IFS= read -r t; do
+        printf 'tap "%s"\n' "$t"
+    done > "$tmp/Brewfile"
+    touch "$tmp/Brewfile.pending"
+
+    local before after
+    before=$(shasum "$tmp/Brewfile" | awk '{print $1}')
+
+    BREWFILE="$tmp/Brewfile" PENDING="$tmp/Brewfile.pending" \
+        timeout 30 "$script" --dry-run --type tap --no-fzf </dev/null >/dev/null 2>&1
+    local rc=$?
+
+    after=$(shasum "$tmp/Brewfile" | awk '{print $1}')
+
+    # Without checking rc, a script crash before any write would silently
+    # pass the sha-unchanged assertion. Treat anything other than 0 as a
+    # real failure (124 is timeout from the wrapper).
+    if [[ $rc -ne 0 ]]; then
+        if [[ $rc -eq 124 ]]; then
+            fail "brew-audit --dry-run timed out"
+        else
+            fail "brew-audit --dry-run exited $rc"
+        fi
+    elif [[ "$before" == "$after" ]]; then
+        pass "brew-audit --dry-run leaves Brewfile unchanged"
+    else
+        fail "brew-audit --dry-run mutated Brewfile"
+    fi
+
+    rm -rf "$tmp"
+}
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -438,6 +553,7 @@ main() {
     test_linux_packages
     test_idempotency
     test_sort_brewfile
+    test_brew_audit_dry_run
 
     # Summary
     section "Summary"

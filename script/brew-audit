@@ -18,8 +18,10 @@
 set -e
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BREWFILE="$DOTFILES_ROOT/macos/Brewfile"
-PENDING="$DOTFILES_ROOT/macos/Brewfile.pending"
+# Env overrides let the smoke suite point at a temp Brewfile without
+# touching the real one. Default to the in-repo path.
+BREWFILE="${BREWFILE:-$DOTFILES_ROOT/macos/Brewfile}"
+PENDING="${PENDING:-$DOTFILES_ROOT/macos/Brewfile.pending}"
 
 # Source shared library
 # shellcheck source=lib.sh
@@ -113,12 +115,21 @@ if [[ ! -f "$BREWFILE" ]]; then
     fail "Brewfile not found at $BREWFILE"
 fi
 
-# Ensure pending file exists
-[[ -f "$PENDING" ]] || touch "$PENDING"
+# Ensure pending file exists. If the parent dir is missing or unwritable
+# we want to fail loudly here rather than later inside commit_appends with
+# a less-actionable "append failed" message.
+[[ -f "$PENDING" ]] || touch "$PENDING" || fail "Could not create $PENDING (parent dir missing or unwritable?)"
 
 # Create temp workspace
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+
+# Staging files for additions - writes accumulate here and only land in
+# the real files after selection completes. Means a Ctrl-C mid-selection
+# can't leave the Brewfile half-mutated (and unsorted).
+BREWFILE_STAGED="$TMP/brewfile_staged"
+PENDING_STAGED="$TMP/pending_staged"
+touch "$BREWFILE_STAGED" "$PENDING_STAGED"
 
 # =============================================================================
 # Parse Brewfile and Brewfile.pending
@@ -255,23 +266,55 @@ add_to_brewfile() {
     if [[ "$DRY_RUN" == true ]]; then
         printf "${GRAY}  [dry-run]${NC} Would add: %s\n" "$entry"
     else
-        echo "$entry" >> "$BREWFILE"
+        echo "$entry" >> "$BREWFILE_STAGED"
     fi
     ADDED_COUNT=$((ADDED_COUNT + 1))
 }
 
 add_to_pending() {
     local entry="$1"  # e.g., "brew 'foo'"
-    local date
-    date=$(date +%Y-%m-%d)
 
     if [[ "$DRY_RUN" == true ]]; then
         printf "${GRAY}  [dry-run]${NC} Would skip: # %s\n" "$entry"
     else
-        echo "# Skipped by brew-audit on $date" >> "$PENDING"
-        echo "# ${entry}" >> "$PENDING"
+        local date
+        date=$(date +%Y-%m-%d)
+        printf '# Skipped by brew-audit on %s\n# %s\n' "$date" "$entry" >> "$PENDING_STAGED"
     fi
     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+}
+
+# Flush staged additions to the real Brewfile / Brewfile.pending.
+# Called once after selection completes, so a partial run leaves the
+# tracked files untouched. On write failure (disk full, permission, RO
+# filesystem), the staged content is copied out to a recoverable path
+# next to the target before `fail` aborts — without this, the EXIT trap
+# would drop the staged dir and the user would have no way to recover
+# their selections.
+commit_appends() {
+    [[ "$DRY_RUN" == true ]] && return 0
+    local timestamp recovery
+    timestamp="$(date +%Y%m%d-%H%M%S)"
+    if [[ -s "$BREWFILE_STAGED" ]]; then
+        if ! cat "$BREWFILE_STAGED" >> "$BREWFILE"; then
+            recovery="${BREWFILE}.unsaved.${timestamp}"
+            if cp "$BREWFILE_STAGED" "$recovery" 2>/dev/null; then
+                fail "Failed to append staged additions to $BREWFILE. Recovery copy: $recovery"
+            else
+                fail "Failed to append staged additions to $BREWFILE (recovery copy also failed)"
+            fi
+        fi
+    fi
+    if [[ -s "$PENDING_STAGED" ]]; then
+        if ! cat "$PENDING_STAGED" >> "$PENDING"; then
+            recovery="${PENDING}.unsaved.${timestamp}"
+            if cp "$PENDING_STAGED" "$recovery" 2>/dev/null; then
+                fail "Failed to append staged skips to $PENDING. Recovery copy: $recovery"
+            else
+                fail "Failed to append staged skips to $PENDING (recovery copy also failed)"
+            fi
+        fi
+    fi
 }
 
 # =============================================================================
@@ -391,6 +434,13 @@ else
         echo ""
     fi
     run_simple_prompts
+fi
+
+# Flush staged appends to the real files now that selection is complete.
+# If the script dies before this point (Ctrl-C in fzf, mid-prompt crash),
+# the staging files get cleaned up by the EXIT trap and Brewfile is untouched.
+if [[ "$SELECTION_CANCELLED" != true ]]; then
+    commit_appends
 fi
 
 # =============================================================================
