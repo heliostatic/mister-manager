@@ -1,5 +1,10 @@
 name: CI
 
+# Least-privilege: this workflow only reads the repo (checkout) and runs
+# tests. No write scopes needed.
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
@@ -11,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Run shellcheck
         # --severity=error gates on real bugs only. Pre-existing style
         # warnings (SC2155 declare-and-assign, SC2059 ANSI vars in printf
@@ -28,14 +35,21 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Install GNU coreutils (smoke suite uses `timeout`)
         # macOS doesn't ship `timeout`; homebrew's coreutils installs it
         # as `gtimeout` by default. The `libexec/gnubin` path provides
         # un-prefixed names. Idempotent if coreutils is pre-installed on
         # the runner image.
         run: brew install coreutils
-      - name: Confirm /bin/bash is 3.2
-        run: /bin/bash --version | head -1
+      - name: Assert /bin/bash is 3.2
+        # Fail loudly if Apple ever ships a newer bash by default — the
+        # whole point of this job is the 3.2 compat gate.
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash --version | head -1 | grep -q 'version 3\.2\.' \
+            || { echo "Expected /bin/bash to be 3.2; got something else"; exit 1; }
       - name: Run smoke tests
         # Prepend /bin so `env bash` in subscript shebangs resolves to
         # Apple's frozen-at-3.2.57 system bash. Prepend coreutils gnubin
@@ -49,6 +63,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Show bash version
         run: bash --version | head -1
       - name: Run smoke tests

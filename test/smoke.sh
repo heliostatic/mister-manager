@@ -60,28 +60,24 @@ verbose() {
     fi
 }
 
-# Run a command with timeout and check exit code
+# Run a command with timeout and check exit code matches `expected` EXACTLY.
+# A loose "any non-zero" check would let exit 127 (command not found) or 126
+# (not executable) pass as if it were the validation error we asked for.
 check_exit() {
     local name="$1"
     local expected="$2"
     shift 2
 
     verbose "Running: $*"
-    if timeout 30 "$@" &>/dev/null; then
-        if [[ "$expected" == "0" ]]; then
-            pass "$name"
-        else
-            fail "$name (expected exit $expected, got 0)"
-        fi
+    timeout 30 "$@" &>/dev/null
+    local code=$?
+
+    if [[ $code -eq 124 ]]; then
+        fail "$name (timeout)"
+    elif [[ "$code" == "$expected" ]]; then
+        pass "$name"
     else
-        local code=$?
-        if [[ $code -eq 124 ]]; then
-            fail "$name (timeout)"
-        elif [[ "$expected" == "0" ]]; then
-            fail "$name (exit code $code)"
-        else
-            pass "$name"
-        fi
+        fail "$name (expected exit $expected, got $code)"
     fi
 }
 
@@ -232,7 +228,16 @@ test_secrets() {
 test_lib_functions() {
     section "Library Functions"
 
-    # Source lib.sh in a subshell to avoid polluting our environment
+    # Source lib.sh in a subshell to avoid polluting our environment.
+    # Run the subshell with output redirected to a temp file, then read
+    # results in the *parent* shell — if we piped (`| while`), pass/fail's
+    # counter increments would be scoped to the pipe subshell and never
+    # reach $PASSED/$FAILED. (Bash 3.2 also rejects process substitution
+    # `<(…)` here because the subshell uses `local`, which only works
+    # inside a function body and not under process substitution on 3.2.)
+    local tmpresults
+    tmpresults=$(mktemp)
+
     (
         # Temporarily disable logging for tests
         export DOTFILES_LOG=none
@@ -294,15 +299,30 @@ test_lib_functions() {
         fi
 
         rm -rf "$tmp"
-    ) | while read -r result; do
+
+        # Sentinel: if the subshell died before reaching this (lib.sh missing,
+        # source failed, etc.), the parent's while-read sees zero lines and
+        # would otherwise report "test passed" while asserting nothing.
+        echo "PASS:lib_functions_completed"
+    ) > "$tmpresults"
+
+    local saw_sentinel=false
+    while read -r result; do
         local status="${result%%:*}"
         local name="${result#*:}"
+        [[ "$name" == "lib_functions_completed" ]] && saw_sentinel=true
         if [[ "$status" == "PASS" ]]; then
             pass "$name"
         else
             fail "$name"
         fi
-    done
+    done < "$tmpresults"
+
+    rm -f "$tmpresults"
+
+    if [[ "$saw_sentinel" != true ]]; then
+        fail "test_lib_functions subshell aborted before completion"
+    fi
 }
 
 test_completions() {
@@ -359,7 +379,12 @@ test_idempotency() {
     count1=$(timeout 30 "$DOTFILES_ROOT/script/bootstrap" --symlinks-only --dry-run 2>&1 | grep -o "[0-9]* operation" | grep -o "[0-9]*" || echo "0")
     count2=$(timeout 30 "$DOTFILES_ROOT/script/bootstrap" --symlinks-only --dry-run 2>&1 | grep -o "[0-9]* operation" | grep -o "[0-9]*" || echo "0")
 
-    if [[ "$count1" == "$count2" ]]; then
+    # Require an actual positive count first — otherwise "0 == 0 ✓ pass" hides
+    # the case where bootstrap crashed before printing the operation summary
+    # (e.g. missing `timeout`, or someone reworded the message).
+    if ! [[ "$count1" =~ ^[1-9][0-9]*$ ]]; then
+        fail "dry-run produced no operation count (got '$count1' — did bootstrap actually run?)"
+    elif [[ "$count1" == "$count2" ]]; then
         pass "dry-run is idempotent ($count1 operations)"
     else
         fail "dry-run not idempotent ($count1 vs $count2)"
