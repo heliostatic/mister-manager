@@ -30,6 +30,7 @@
 
 # Stage an addition to Brewfile.
 add_to_brewfile() {
+    : "${BREWFILE_STAGED:?required by brew-audit.lib.sh}"
     local entry="$1"  # e.g. "brew 'foo'"
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -50,6 +51,8 @@ add_to_brewfile() {
 # staged content when $PENDING already has prior content, keeping the
 # eventual commit_appends call atomic.
 add_to_pending() {
+    : "${PENDING:?required by brew-audit.lib.sh}"
+    : "${PENDING_STAGED:?required by brew-audit.lib.sh}"
     local entry="$1"  # e.g. "brew 'foo'"
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -81,26 +84,35 @@ add_to_pending() {
 # would drop the staged dir and the user would have no way to recover
 # their selections.
 commit_appends() {
+    : "${BREWFILE:?required by brew-audit.lib.sh}"
+    : "${PENDING:?required by brew-audit.lib.sh}"
+    : "${BREWFILE_STAGED:?required by brew-audit.lib.sh}"
+    : "${PENDING_STAGED:?required by brew-audit.lib.sh}"
     [[ "$DRY_RUN" == true ]] && return 0
-    local timestamp recovery
-    timestamp="$(date +%Y%m%d-%H%M%S)"
+    local timestamp recovery cp_err
+    timestamp=$(date +%Y%m%d-%H%M%S) || fail "date command failed in commit_appends"
+    [[ -n "$timestamp" ]] || fail "date produced empty timestamp"
+
     if [[ -s "$BREWFILE_STAGED" ]]; then
         if ! cat "$BREWFILE_STAGED" >> "$BREWFILE"; then
             recovery="${BREWFILE}.unsaved.${timestamp}"
-            if cp "$BREWFILE_STAGED" "$recovery" 2>/dev/null; then
+            # Capture cp's stderr so the failure message names the actual
+            # cause (e.g. "No space left on device") instead of just saying
+            # "also failed".
+            if cp_err=$(cp "$BREWFILE_STAGED" "$recovery" 2>&1); then
                 fail "Failed to append staged additions to $BREWFILE. Recovery copy: $recovery"
             else
-                fail "Failed to append staged additions to $BREWFILE (recovery copy also failed)"
+                fail "Failed to append staged additions to $BREWFILE (recovery copy also failed: $cp_err)"
             fi
         fi
     fi
     if [[ -s "$PENDING_STAGED" ]]; then
         if ! cat "$PENDING_STAGED" >> "$PENDING"; then
             recovery="${PENDING}.unsaved.${timestamp}"
-            if cp "$PENDING_STAGED" "$recovery" 2>/dev/null; then
+            if cp_err=$(cp "$PENDING_STAGED" "$recovery" 2>&1); then
                 fail "Failed to append staged skips to $PENDING. Recovery copy: $recovery"
             else
-                fail "Failed to append staged skips to $PENDING (recovery copy also failed)"
+                fail "Failed to append staged skips to $PENDING (recovery copy also failed: $cp_err)"
             fi
         fi
     fi

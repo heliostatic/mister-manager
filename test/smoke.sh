@@ -542,6 +542,14 @@ test_brew_audit_staging() {
             echo "FAIL:staging_skipped_counter (got $SKIPPED_COUNT)"
         fi
 
+        # Atomicity: $PENDING and $BREWFILE must still be empty pre-commit —
+        # this is the headline guarantee of the staging refactor.
+        if [[ ! -s "$PENDING" && ! -s "$BREWFILE" ]]; then
+            echo "PASS:staging_real_files_untouched_pre_commit"
+        else
+            echo "FAIL:staging_real_files_untouched_pre_commit"
+        fi
+
         # commit_appends flushes staging to the real PENDING
         commit_appends
         if grep -qF "# tap 'foo'" "$PENDING" \
@@ -576,21 +584,29 @@ test_brew_audit_staging() {
 
         # Recovery path: make PENDING read-only so commit_appends fails its
         # cat-append, then verify a .unsaved.<ts> recovery file is created.
-        # Reset staging and put fresh content there.
-        : > "$PENDING_STAGED"
-        add_to_pending "brew 'recovery-target'"
-        chmod 444 "$PENDING"
-        # commit_appends calls fail() on error, which exits — run it in a
-        # subshell so the test loop survives.
-        (commit_appends) >/dev/null 2>&1
-        chmod 644 "$PENDING"
-        local recovery
-        recovery=$(ls "${PENDING}".unsaved.* 2>/dev/null | head -1)
-        if [[ -n "$recovery" && -f "$recovery" ]] \
-            && grep -qF "# brew 'recovery-target'" "$recovery"; then
-            echo "PASS:staging_recovery_on_write_failure"
+        # Skipped under EUID=0 because root bypasses mode bits and would
+        # cause the cat to succeed unexpectedly.
+        if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+            echo "PASS:staging_recovery_on_write_failure (skipped: root bypasses chmod)"
         else
-            echo "FAIL:staging_recovery_on_write_failure"
+            # Clean any stale .unsaved.* from prior runs in this sandbox so
+            # the post-commit glob assertion is strictly about THIS invocation.
+            rm -f "${PENDING}".unsaved.*
+            : > "$PENDING_STAGED"
+            add_to_pending "brew 'recovery-target'"
+            chmod 444 "$PENDING"
+            # commit_appends calls fail() on error, which exits — run it in a
+            # subshell so the test loop survives.
+            (commit_appends) >/dev/null 2>&1
+            chmod 644 "$PENDING"
+            local recovery
+            recovery=$(ls "${PENDING}".unsaved.* 2>/dev/null | head -1)
+            if [[ -n "$recovery" && -f "$recovery" ]] \
+                && grep -qF "# brew 'recovery-target'" "$recovery"; then
+                echo "PASS:staging_recovery_on_write_failure"
+            else
+                echo "FAIL:staging_recovery_on_write_failure"
+            fi
         fi
 
         # Dry-run path doesn't touch staging
