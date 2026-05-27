@@ -13,6 +13,7 @@ complete -c secrets -n '__fish_use_subcommand' -a 'help' -d 'Show help'
 
 # Options
 complete -c secrets -s n -l dry-run -d 'Preview without making changes (for cache-all)'
+complete -c secrets -l refresh -d 'Bypass Keychain cache (for get)' -n '__fish_seen_subcommand_from get'
 complete -c secrets -l skip-validate -d 'Skip item validation before caching'
 complete -c secrets -s h -l help -d 'Show help'
 
