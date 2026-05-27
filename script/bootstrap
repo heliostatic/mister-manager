@@ -70,7 +70,10 @@ run_installers() {
     # Run platform-specific installers only on matching OS
     local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
-    for installer in $(find "$DOTFILES_ROOT" -maxdepth 2 -name "install.sh" | sort); do
+    # Use process substitution + read so paths containing spaces survive.
+    # (find … | for … would word-split on IFS.)
+    while IFS= read -r installer; do
+        [[ -z "$installer" ]] && continue
         local topic_dir="$(dirname "$installer")"
         local topic_name="$(basename "$topic_dir")"
 
@@ -87,7 +90,7 @@ run_installers() {
         echo ""
         info "${topic_name}"
         "$installer"
-    done
+    done < <(find "$DOTFILES_ROOT" -maxdepth 2 -name "install.sh" | sort)
 }
 
 # -----------------------------------------------------------------------------
@@ -123,7 +126,7 @@ unlink_dotfiles() {
 
                     # Look for most recent backup
                     local backup
-                    backup=$(ls -t "${dst}.backup."* 2>/dev/null | head -1 || true)
+                    backup=$(find_latest_backup "$dst")
                     if [[ -n "$backup" && -e "$backup" ]]; then
                         info "Restoring: $backup"
                         run mv "$backup" "$dst"
@@ -163,7 +166,7 @@ unlink_dotfiles() {
 
         # Look for backup
         local backup
-        backup=$(ls -t "${dst}.backup."* 2>/dev/null | head -1 || true)
+        backup=$(find_latest_backup "$dst")
         if [[ -n "$backup" && -e "$backup" ]]; then
             info "Restoring: $backup"
             run mv "$backup" "$dst"
@@ -362,10 +365,13 @@ run_doctor() {
         info "No ~/.ssh/config (run bootstrap to create)"
     fi
 
-    # Check for SSH keys
+    # Check for SSH keys. If no files match the glob it stays literal, so
+    # the [[ -f ]] guard naturally skips it — no nullglob needed.
     local key_count=0
     for key in "$HOME/.ssh/id_"*; do
-        [[ -f "$key" && ! "$key" == *.pub ]] && ((key_count++)) || true
+        if [[ -f "$key" && "$key" != *.pub ]]; then
+            key_count=$((key_count + 1))
+        fi
     done
     if [[ $key_count -gt 0 ]]; then
         verbose "OK: $key_count SSH key(s) found"
