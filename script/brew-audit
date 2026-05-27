@@ -277,9 +277,21 @@ add_to_pending() {
     if [[ "$DRY_RUN" == true ]]; then
         printf "${GRAY}  [dry-run]${NC} Would skip: # %s\n" "$entry"
     else
-        local date
-        date=$(date +%Y-%m-%d)
-        printf '# Skipped by brew-audit on %s\n# %s\n' "$date" "$entry" >> "$PENDING_STAGED"
+        # Lazy batch header: write exactly once per brew-audit run (i.e. on
+        # the first skip of this invocation). Subsequent skips emit only the
+        # commented entry, so the resulting pending file groups skips under
+        # one dated header instead of repeating the header per package.
+        if [[ ! -s "$PENDING_STAGED" ]]; then
+            # If the real pending file already has prior content, prepend a
+            # blank line so successive runs produce visually distinct batches.
+            # Including the blank in the staged content keeps the append
+            # atomic (vs. writing a separator straight to $PENDING).
+            if [[ -s "$PENDING" ]]; then
+                echo "" >> "$PENDING_STAGED"
+            fi
+            printf '# Skipped by brew-audit on %s\n' "$(date +%Y-%m-%d)" >> "$PENDING_STAGED"
+        fi
+        printf '# %s\n' "$entry" >> "$PENDING_STAGED"
     fi
     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
 }
