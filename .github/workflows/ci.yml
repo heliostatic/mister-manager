@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        # --severity=error gates on real bugs only. Pre-existing style
+        # warnings (SC2155 declare-and-assign, SC2059 ANSI vars in printf
+        # format, SC2088 tilde-in-quoted-display-string) are intentional
+        # patterns in this codebase. Tighten to `warning` once those are
+        # either fixed or explicitly disabled in .shellcheckrc.
+        run: |
+          shellcheck --severity=error -s bash \
+            script/bootstrap script/secrets script/brew-audit \
+            script/sort-brewfile script/lib.sh script/symlink \
+            script/takeover script/secrets-setup test/smoke.sh
+
+  smoke-bash-3-2:
+    name: Smoke (bash 3.2 / macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm /bin/bash is 3.2
+        run: /bin/bash --version | head -1
+      - name: Run smoke tests
+        # Prepend /bin so `env bash` in subscript shebangs resolves to
+        # Apple's frozen-at-3.2.57 system bash instead of homebrew's 5.x.
+        # The rest of PATH stays intact so `timeout`, `brew`, `shasum`
+        # etc. remain reachable.
+        run: PATH=/bin:$PATH /bin/bash test/smoke.sh
+
+  smoke-bash-5:
+    name: Smoke (bash 5.x / Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show bash version
+        run: bash --version | head -1
+      - name: Run smoke tests
+        run: ./test/smoke.sh
