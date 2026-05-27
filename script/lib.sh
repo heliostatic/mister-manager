@@ -53,34 +53,36 @@ _log() {
 # =============================================================================
 # Process Locking
 # =============================================================================
-LOCKDIR="${TMPDIR:-/tmp}/dotfiles-bootstrap.lock"
+# Per-user lockdir prevents two different users on the same host from
+# fighting over a single /tmp lock.
+LOCKDIR="${TMPDIR:-/tmp}/dotfiles-bootstrap-${UID:-$(id -u)}.lock"
 
-# Acquire exclusive lock - prevents concurrent bootstrap runs
+# Acquire exclusive lock - prevents concurrent bootstrap runs.
+# Retries once after cleaning up a stale lock so that the rm/mkdir gap
+# doesn't cause a spurious failure when the previous owner had died.
 acquire_lock() {
-    if mkdir "$LOCKDIR" 2>/dev/null; then
-        # Successfully acquired lock
-        echo $$ > "$LOCKDIR/pid"
-        trap 'release_lock' EXIT
-        return 0
-    fi
-
-    # Lock exists - check if stale (owner process dead)
-    local pid
-    pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
-
-    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
-        # Stale lock - previous process died
-        warn "Removing stale lock from PID $pid"
-        rm -rf "$LOCKDIR"
+    local attempt pid
+    for attempt in 1 2; do
         if mkdir "$LOCKDIR" 2>/dev/null; then
             echo $$ > "$LOCKDIR/pid"
-            trap 'release_lock' EXIT
+            # Cover signals too: a Ctrl-C otherwise leaves the lockdir behind
+            # and the next run has to wait for stale-detection to recover.
+            trap 'release_lock' EXIT INT TERM HUP
             return 0
         fi
-    fi
 
-    # Lock is held by running process
-    fail "Bootstrap already running (PID: ${pid:-unknown}, lockdir: $LOCKDIR)"
+        pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
+
+        if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+            warn "Removing stale lock from PID $pid"
+            rm -rf "$LOCKDIR" 2>/dev/null || true
+            continue
+        fi
+
+        fail "Bootstrap already running (PID: ${pid:-unknown}, lockdir: $LOCKDIR)"
+    done
+
+    fail "Could not acquire lock at $LOCKDIR (raced with another bootstrap)"
 }
 
 # Release lock - called automatically on exit via trap
@@ -275,8 +277,10 @@ ensure_symlink() {
             run rm "$dst"
         fi
     elif [[ -e "$dst" ]]; then
-        # Regular file/dir exists - back it up
-        local backup="$dst.backup.$(date +%Y%m%d-%H%M%S)"
+        # Regular file/dir exists - back it up.
+        # Include PID + $RANDOM so two backups of the same file within
+        # the same second don't silently overwrite each other.
+        local backup="$dst.backup.$(date +%Y%m%d-%H%M%S).$$-$RANDOM"
         warn "Backing up existing: $dst → $backup"
         run mv "$dst" "$backup"
     fi
@@ -284,6 +288,23 @@ ensure_symlink() {
     run ln -s "$src" "$dst"
     track_link "$src" "$dst"
     [[ "$DRY_RUN" == true ]] || success "Linked: $dst → $src"
+}
+
+# Find the most recent backup file for $1 (newest by lexicographic order,
+# which works because backup names start with a sortable timestamp).
+# Echoes the path on stdout; empty if none exist.
+# Avoids `ls -t | head -1` so we don't parse `ls` output.
+find_latest_backup() {
+    local dst="$1"
+    local newest="" candidate
+    for candidate in "${dst}.backup."*; do
+        # If no matches, glob stays literal; this guard skips it.
+        [[ -e "$candidate" ]] || continue
+        if [[ -z "$newest" ]] || [[ "$candidate" > "$newest" ]]; then
+            newest="$candidate"
+        fi
+    done
+    [[ -n "$newest" ]] && echo "$newest"
 }
 
 # Check if operation would change anything
