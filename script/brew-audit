@@ -282,14 +282,28 @@ add_to_pending() {
 
 # Flush staged additions to the real Brewfile / Brewfile.pending.
 # Called once after selection completes, so a partial run leaves the
-# tracked files untouched.
+# tracked files untouched. On write failure (disk full, permission, RO
+# filesystem), the staged content is copied out to a recoverable path
+# next to the target before `fail` aborts — without this, the EXIT trap
+# would drop the staged dir and the user would have no way to recover
+# their selections.
 commit_appends() {
     [[ "$DRY_RUN" == true ]] && return 0
+    local timestamp recovery
+    timestamp="$(date +%Y%m%d-%H%M%S)"
     if [[ -s "$BREWFILE_STAGED" ]]; then
-        cat "$BREWFILE_STAGED" >> "$BREWFILE"
+        if ! cat "$BREWFILE_STAGED" >> "$BREWFILE"; then
+            recovery="${BREWFILE}.unsaved.${timestamp}"
+            cp "$BREWFILE_STAGED" "$recovery" 2>/dev/null || true
+            fail "Failed to append staged additions to $BREWFILE. Recovery copy: $recovery"
+        fi
     fi
     if [[ -s "$PENDING_STAGED" ]]; then
-        cat "$PENDING_STAGED" >> "$PENDING"
+        if ! cat "$PENDING_STAGED" >> "$PENDING"; then
+            recovery="${PENDING}.unsaved.${timestamp}"
+            cp "$PENDING_STAGED" "$recovery" 2>/dev/null || true
+            fail "Failed to append staged skips to $PENDING. Recovery copy: $recovery"
+        fi
     fi
 }
 

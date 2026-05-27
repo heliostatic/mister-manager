@@ -65,8 +65,9 @@ acquire_lock() {
     for attempt in 1 2; do
         if mkdir "$LOCKDIR" 2>/dev/null; then
             echo $$ > "$LOCKDIR/pid"
-            # Cover signals too: a Ctrl-C otherwise leaves the lockdir behind
-            # and the next run has to wait for stale-detection to recover.
+            # Cover signals explicitly so a Ctrl-C / kill reliably triggers
+            # release_lock — depending on the running child command, INT/TERM
+            # may not always cascade through to the EXIT trap.
             trap 'release_lock' EXIT INT TERM HUP
             return 0
         fi
@@ -75,7 +76,12 @@ acquire_lock() {
 
         if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
             warn "Removing stale lock from PID $pid"
-            rm -rf "$LOCKDIR" 2>/dev/null || true
+            # Surface rm failure (immutable flag, root-owned dir, …) instead
+            # of swallowing it and reporting a misleading "raced" message
+            # from the post-loop fail.
+            if ! rm -rf "$LOCKDIR" 2>/dev/null; then
+                fail "Could not remove stale lockdir $LOCKDIR (permission denied?)"
+            fi
             continue
         fi
 
@@ -292,6 +298,9 @@ ensure_symlink() {
 
 # Find the most recent backup file for $1 (newest by lexicographic order,
 # which works because backup names start with a sortable timestamp).
+# Same-second backups tie-break on the PID-RANDOM suffix as a string
+# compare, not by wall-clock — both are functionally simultaneous so the
+# choice between them doesn't matter.
 # Echoes the path on stdout; empty if none exist.
 # Avoids `ls -t | head -1` so we don't parse `ls` output.
 find_latest_backup() {
