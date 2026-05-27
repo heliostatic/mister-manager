@@ -23,9 +23,11 @@ DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BREWFILE="${BREWFILE:-$DOTFILES_ROOT/macos/Brewfile}"
 PENDING="${PENDING:-$DOTFILES_ROOT/macos/Brewfile.pending}"
 
-# Source shared library
+# Source shared library and the brew-audit staging helpers
 # shellcheck source=lib.sh
 source "$DOTFILES_ROOT/script/lib.sh"
+# shellcheck source=brew-audit.lib.sh
+source "$DOTFILES_ROOT/script/brew-audit.lib.sh"
 
 # =============================================================================
 # Options
@@ -255,79 +257,10 @@ info "Found $TOTAL_UNTRACKED untracked package(s)"
 } > "$TMP/untracked_all"
 
 # =============================================================================
-# Helper functions
+# Counters (the staging helpers themselves live in brew-audit.lib.sh)
 # =============================================================================
 ADDED_COUNT=0
 SKIPPED_COUNT=0
-
-add_to_brewfile() {
-    local entry="$1"  # e.g., "brew 'foo'"
-
-    if [[ "$DRY_RUN" == true ]]; then
-        printf "${GRAY}  [dry-run]${NC} Would add: %s\n" "$entry"
-    else
-        echo "$entry" >> "$BREWFILE_STAGED"
-    fi
-    ADDED_COUNT=$((ADDED_COUNT + 1))
-}
-
-add_to_pending() {
-    local entry="$1"  # e.g., "brew 'foo'"
-
-    if [[ "$DRY_RUN" == true ]]; then
-        printf "${GRAY}  [dry-run]${NC} Would skip: # %s\n" "$entry"
-    else
-        # Lazy batch header: write exactly once per brew-audit run (i.e. on
-        # the first skip of this invocation). Subsequent skips emit only the
-        # commented entry, so the resulting pending file groups skips under
-        # one dated header instead of repeating the header per package.
-        if [[ ! -s "$PENDING_STAGED" ]]; then
-            # If the real pending file already has prior content, prepend a
-            # blank line so successive runs produce visually distinct batches.
-            # Including the blank in the staged content keeps the append
-            # atomic (vs. writing a separator straight to $PENDING).
-            if [[ -s "$PENDING" ]]; then
-                echo "" >> "$PENDING_STAGED"
-            fi
-            printf '# Skipped by brew-audit on %s\n' "$(date +%Y-%m-%d)" >> "$PENDING_STAGED"
-        fi
-        printf '# %s\n' "$entry" >> "$PENDING_STAGED"
-    fi
-    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-}
-
-# Flush staged additions to the real Brewfile / Brewfile.pending.
-# Called once after selection completes, so a partial run leaves the
-# tracked files untouched. On write failure (disk full, permission, RO
-# filesystem), the staged content is copied out to a recoverable path
-# next to the target before `fail` aborts — without this, the EXIT trap
-# would drop the staged dir and the user would have no way to recover
-# their selections.
-commit_appends() {
-    [[ "$DRY_RUN" == true ]] && return 0
-    local timestamp recovery
-    timestamp="$(date +%Y%m%d-%H%M%S)"
-    if [[ -s "$BREWFILE_STAGED" ]]; then
-        if ! cat "$BREWFILE_STAGED" >> "$BREWFILE"; then
-            recovery="${BREWFILE}.unsaved.${timestamp}"
-            if cp "$BREWFILE_STAGED" "$recovery" 2>/dev/null; then
-                fail "Failed to append staged additions to $BREWFILE. Recovery copy: $recovery"
-            else
-                fail "Failed to append staged additions to $BREWFILE (recovery copy also failed)"
-            fi
-        fi
-    fi
-    if [[ -s "$PENDING_STAGED" ]]; then
-        if ! cat "$PENDING_STAGED" >> "$PENDING"; then
-            recovery="${PENDING}.unsaved.${timestamp}"
-            if cp "$PENDING_STAGED" "$recovery" 2>/dev/null; then
-                fail "Failed to append staged skips to $PENDING. Recovery copy: $recovery"
-            else
-                fail "Failed to append staged skips to $PENDING (recovery copy also failed)"
-            fi
-        fi
-    fi
-}
 
 # =============================================================================
 # FZF-based selection (preferred)
