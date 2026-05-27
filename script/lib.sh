@@ -76,11 +76,12 @@ acquire_lock() {
 
         if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
             warn "Removing stale lock from PID $pid"
-            # Surface rm failure (immutable flag, root-owned dir, …) instead
-            # of swallowing it and reporting a misleading "raced" message
-            # from the post-loop fail.
-            if ! rm -rf "$LOCKDIR" 2>/dev/null; then
-                fail "Could not remove stale lockdir $LOCKDIR (permission denied?)"
+            # Surface rm failure (immutable flag, root-owned dir, …) with
+            # rm's own error message instead of swallowing it and reporting
+            # a misleading "raced" message from the post-loop fail.
+            local rm_err
+            if ! rm_err=$(rm -rf "$LOCKDIR" 2>&1); then
+                fail "Could not remove stale lockdir $LOCKDIR: $rm_err"
             fi
             continue
         fi

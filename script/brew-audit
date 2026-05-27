@@ -115,8 +115,10 @@ if [[ ! -f "$BREWFILE" ]]; then
     fail "Brewfile not found at $BREWFILE"
 fi
 
-# Ensure pending file exists
-[[ -f "$PENDING" ]] || touch "$PENDING"
+# Ensure pending file exists. If the parent dir is missing or unwritable
+# we want to fail loudly here rather than later inside commit_appends with
+# a less-actionable "append failed" message.
+[[ -f "$PENDING" ]] || touch "$PENDING" || fail "Could not create $PENDING (parent dir missing or unwritable?)"
 
 # Create temp workspace
 TMP=$(mktemp -d)
@@ -296,15 +298,21 @@ commit_appends() {
     if [[ -s "$BREWFILE_STAGED" ]]; then
         if ! cat "$BREWFILE_STAGED" >> "$BREWFILE"; then
             recovery="${BREWFILE}.unsaved.${timestamp}"
-            cp "$BREWFILE_STAGED" "$recovery" 2>/dev/null || true
-            fail "Failed to append staged additions to $BREWFILE. Recovery copy: $recovery"
+            if cp "$BREWFILE_STAGED" "$recovery" 2>/dev/null; then
+                fail "Failed to append staged additions to $BREWFILE. Recovery copy: $recovery"
+            else
+                fail "Failed to append staged additions to $BREWFILE (recovery copy also failed)"
+            fi
         fi
     fi
     if [[ -s "$PENDING_STAGED" ]]; then
         if ! cat "$PENDING_STAGED" >> "$PENDING"; then
             recovery="${PENDING}.unsaved.${timestamp}"
-            cp "$PENDING_STAGED" "$recovery" 2>/dev/null || true
-            fail "Failed to append staged skips to $PENDING. Recovery copy: $recovery"
+            if cp "$PENDING_STAGED" "$recovery" 2>/dev/null; then
+                fail "Failed to append staged skips to $PENDING. Recovery copy: $recovery"
+            else
+                fail "Failed to append staged skips to $PENDING (recovery copy also failed)"
+            fi
         fi
     fi
 }

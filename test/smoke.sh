@@ -405,9 +405,9 @@ test_sort_brewfile() {
         skip "Brewfile not present"
     fi
 
-    # Tab handling: entries indented with tabs should survive sorting.
-    # Before the [[:space:]] fix, `^brew ` (literal space) would silently
-    # drop a tab-indented `brew\t"foo"` entry.
+    # Tab handling: both tab- and space-indented brew entries must survive
+    # the sort. Guards against a regression where the section-bucket regex
+    # matches only a literal space and silently drops tab-indented lines.
     local tab_tmp
     tab_tmp=$(mktemp -d)
     # printf %b interprets the \t; the resulting file mixes tab and space indents.
@@ -486,11 +486,21 @@ test_brew_audit_dry_run() {
     before=$(shasum "$tmp/Brewfile" | awk '{print $1}')
 
     BREWFILE="$tmp/Brewfile" PENDING="$tmp/Brewfile.pending" \
-        timeout 30 "$script" --dry-run --type tap --no-fzf </dev/null >/dev/null 2>&1 || true
+        timeout 30 "$script" --dry-run --type tap --no-fzf </dev/null >/dev/null 2>&1
+    local rc=$?
 
     after=$(shasum "$tmp/Brewfile" | awk '{print $1}')
 
-    if [[ "$before" == "$after" ]]; then
+    # Without checking rc, a script crash before any write would silently
+    # pass the sha-unchanged assertion. Treat anything other than 0 as a
+    # real failure (124 is timeout from the wrapper).
+    if [[ $rc -ne 0 ]]; then
+        if [[ $rc -eq 124 ]]; then
+            fail "brew-audit --dry-run timed out"
+        else
+            fail "brew-audit --dry-run exited $rc"
+        fi
+    elif [[ "$before" == "$after" ]]; then
         pass "brew-audit --dry-run leaves Brewfile unchanged"
     else
         fail "brew-audit --dry-run mutated Brewfile"
